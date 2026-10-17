@@ -55,7 +55,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"\n{len(ids)} draft(s) saved as pending.")
 
         elif args.command == "list":
-            for post in store.list_posts(args.status):
+            for post in _all_posts(store, args.status):
                 flag = " (has problems)" if post.problems else ""
                 print(f"#{post.id}  [{post.status}]  {post.topic}{flag}")
 
@@ -73,7 +73,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "export":
             folder = Path(args.folder)
             folder.mkdir(parents=True, exist_ok=True)
-            approved = store.list_posts("approved")
+            approved = _all_posts(store, "approved")
             for post in approved:
                 (folder / f"post-{post.id}.txt").write_text(post.body + "\n", encoding="utf-8")
             print(f"Exported {len(approved)} approved post(s) to {folder}.")
@@ -84,6 +84,18 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         store.close()
     return 0
+
+
+def _all_posts(store: Store, status: str | None = None) -> list:
+    """Read every matching post. list_posts returns at most 500 per call, so page through."""
+    posts: list = []
+    last_id = 0
+    while True:
+        page = store.list_posts(status, limit=500, after_id=last_id)
+        if not page:
+            return posts
+        posts.extend(page)
+        last_id = page[-1].id
 
 
 def _print_post(post) -> None:
