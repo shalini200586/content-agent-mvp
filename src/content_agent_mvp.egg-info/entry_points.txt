@@ -1,0 +1,2 @@
+[console_scripts]
+content-agent = content_agent.cli:main
