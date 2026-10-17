@@ -1,6 +1,7 @@
 """Command-line interface: draft posts, review them, approve or reject, export."""
 
 import argparse
+import getpass
 import sys
 from pathlib import Path
 
@@ -66,7 +67,7 @@ def main(argv: list[str] | None = None) -> int:
 
         elif args.command in ("approve", "reject"):
             decision = "approved" if args.command == "approve" else "rejected"
-            post = store.decide(args.post_id, decision, args.note)
+            post = store.decide(args.post_id, decision, actor=getpass.getuser(), note=args.note)
             print(f"Post #{post.id} is now {post.status}.")
 
         elif args.command == "export":

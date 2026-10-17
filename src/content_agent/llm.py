@@ -4,6 +4,7 @@ Agents depend on the ChatModel protocol, not on Ollama directly. That keeps the
 agents easy to test (with FakeChat) and lets you switch providers later.
 """
 
+import time
 from typing import Protocol
 
 import ollama
@@ -21,6 +22,9 @@ class OllamaChat:
         self.client = ollama.Client(host=host) if host else ollama.Client()
 
     def complete(self, system: str, user: str) -> str:
+        return with_retries(lambda: self._chat(system, user))
+
+    def _chat(self, system: str, user: str) -> str:
         response = self.client.chat(
             model=self.model,
             messages=[
@@ -29,6 +33,17 @@ class OllamaChat:
             ],
         )
         return response["message"]["content"].strip()
+
+
+def with_retries(call, attempts: int = 3, base_delay: float = 1.0):
+    """Retry a flaky call with exponential backoff. Re-raises the last error."""
+    for attempt in range(1, attempts + 1):
+        try:
+            return call()
+        except (ConnectionError, TimeoutError, OSError):
+            if attempt == attempts:
+                raise
+            time.sleep(base_delay * 2 ** (attempt - 1))
 
 
 class FakeChat:
