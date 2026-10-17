@@ -133,6 +133,25 @@ class Store:
         self.conn.commit()
         return self.get_post(post_id)
 
+    def update_body(self, post_id: int, body: str, problems: list[str], actor: str) -> Post:
+        """Save an edit to a pending draft. Approved and rejected posts cannot change."""
+        if not actor.strip():
+            raise ValueError("an edit needs an actor")
+        if not body.strip():
+            raise ValueError("a post cannot be empty")
+
+        post = self.get_post(post_id)
+        if post.status != "pending":
+            raise InvalidTransition(f"post {post_id} is already {post.status}; it cannot be edited")
+
+        self.conn.execute(
+            "UPDATE posts SET body = ?, problems = ? WHERE id = ?",
+            (body, "\n".join(problems), post_id),
+        )
+        self._log(post_id, "edited", f"{len(problems)} editor problem(s) after edit", actor)
+        self.conn.commit()
+        return self.get_post(post_id)
+
     def add_sources(self, post_id: int, sources: list[tuple[str, str, str, str]]) -> None:
         """Record the stories a draft was built from: (title, outlet, link, published)."""
         self.conn.executemany(

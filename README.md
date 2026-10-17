@@ -1,98 +1,139 @@
-# Content Agent (MVP)
+# Content Agent
 
-A small multi-step AI pipeline that drafts LinkedIn posts, checks them with fixed editorial rules, and waits for a human to approve or reject each one. Everything runs locally with [Ollama](https://ollama.com), so there is no API cost.
+A right-hand assistant for creators who post daily on LinkedIn or X. It finds what is trending in your niche, checks the facts, and drafts posts for you to pick from. You stay in the loop at every step: you choose the topic, and you approve, edit, or reject each draft.
 
-Nothing is published automatically. Approved posts are written to a folder, and a person decides what goes out.
+Everything runs on your own machine with [Ollama](https://ollama.com), so there is no API cost and no account to create. Nothing is published automatically. Approved posts are saved, and you decide what goes out.
 
-## How it works
+## What it does
 
-```
-topic + voice notes
-        │
-        ▼
-  drafter (LLM)  ──►  3 candidate posts
-        │
-        ▼
-  editor (rules)  ──►  problems list per post (length, hashtags, banned phrases, preamble)
-        │
-        ▼
-  store (SQLite) ──►  status: pending
-        │
-        ▼
-  human: approve / reject  ──►  decision is final, every step is logged
-        │
-        ▼
-  export (approved posts → text files)
-```
+1. **Your niche (built).** You type a role or niche, such as "Data engineer". Its Wikipedia summary anchors the voice of the posts.
+2. **What is hot (built).** The app searches Google News for that niche and lists the recent stories. It suggests the one covered by the most outlets, and you can choose any story.
+3. **Facts check (built).** Drafts are written only from the story you chose and its sources. The editor flags numbers and names that don't appear in those sources, and it flags banned phrases and long posts.
+4. **Drafts (LinkedIn style).** The model writes several options, each from a different angle. X length limits and per-platform styles are planned.
+5. **You decide (built).** Drafts wait as `pending`. You can edit them, then approve or reject. Every change is logged with who made it.
 
-| Module | Responsibility |
-|---|---|
-| `llm.py` | Wraps the model behind a `ChatModel` interface. `OllamaChat` for real use, `FakeChat` for tests. |
-| `drafter.py` | Asks the model for several independent drafts on one topic. |
-| `editor.py` | Deterministic rules. Each rule is a plain function you can test and change. |
-| `store.py` | SQLite tables for posts and an audit log. Enforces that decisions can't be changed. |
-| `research.py` | Finds what a role does (Wikipedia) and what is currently covered in its field (Google News RSS), then picks the hot topic. |
-| `workflow.py` | Connects drafting, review, and storage into one step, and the research step on top of it. |
-| `cli.py` | The command-line interface. |
+**Planned:** a taste profile built from a short interview with Ollama or from a scan of your own posts, which would replace the niche typed in step 1. A UI for that is also planned.
 
-## Setup
+## Run it with Docker
 
-You need Python 3.11+ and Ollama.
+This is the easiest way to use the app. You need [Docker Desktop](https://www.docker.com/products/docker-desktop/) (or Docker Engine on Linux) and about 6 GB of free disk space for the model.
 
 ```bash
-# 1. Install Ollama from https://ollama.com, then download a model
+git clone https://github.com/shalini200586/content-agent-mvp.git
+cd content-agent-mvp
+docker compose up --build
+```
+
+The first start downloads the Ollama model (`qwen2.5:7b`, about 4.7 GB). This takes a few minutes and happens once. When the logs settle, open **http://localhost:8080**.
+
+Useful commands:
+
+```bash
+docker compose down        # stop everything; your drafts are kept
+docker compose up -d       # start again in the background
+docker compose logs -f api # watch the API log
+```
+
+Your posts are stored in the `data` volume. To delete them, run `docker compose down -v`.
+
+To use a different model, change `qwen2.5:7b` in `docker-compose.yml` in both the `model` service and the `api` service's `CONTENT_AGENT_MODEL`.
+
+## Run it locally (for development)
+
+You need Python 3.11+, Node.js 20+, and [Ollama](https://ollama.com).
+
+```bash
+# 1. Download the model
 ollama pull qwen2.5:7b
 
-# 2. Create a virtual environment and install the project
+# 2. Install the Python side (API, tests, CLI)
 python -m venv .venv
-.venv\Scripts\activate          # Windows (on macOS/Linux: source .venv/bin/activate)
-pip install -e ".[dev]"
+.venv\Scripts\activate          # Windows (macOS/Linux: source .venv/bin/activate)
+pip install -e ".[web,dev]"
 
-# 3. Run the tests (no Ollama needed)
+# 3. Start the API on port 8000
+uvicorn content_agent.api:app --reload --port 8000
+
+# 4. In a second terminal, start the UI on port 5173
+cd web
+npm install
+npm run dev
+```
+
+Open **http://localhost:5173**. The dev server forwards `/api` requests to the API.
+
+Run the tests (no Ollama or internet needed):
+
+```bash
 pytest
 ```
 
-## Usage
+## Web app
+
+- **Find a topic:** type a niche, pick a story from the trending list, add an optional voice note, and choose how many drafts to write.
+- **Drafts:** filter by pending, approved, or rejected. Open a draft to read its sources and any editor warnings, edit the text, then save, approve, or reject it. Approve is locked until your edits are saved.
+
+## Command line
+
+The same pipeline is available from the terminal:
 
 ```bash
-# Draft three posts on a topic
+# Draft posts on a topic you choose
 content-agent draft "lessons from fixing a flaky test" --voice "calm, practical, first person"
 
-# Review what's waiting
+# Research a role: find its hot topic and draft posts on it
+content-agent research "Data engineer" --count 3
+
+# Review and decide
 content-agent list --status pending
 content-agent show 1
-
-# Decide
 content-agent approve 1 --note "good, post on Tuesday"
 content-agent reject 2 --note "too generic"
 
-# Save approved posts to files
+# Save approved posts to text files
 content-agent export ./approved
-
-# Research a role, find what its field is covering, and draft posts on the hot topic
-content-agent research "Data engineer" --count 3
 ```
 
-`research` reads the role's Wikipedia summary, searches Google News for its field, and picks the story covered by the most outlets. The drafter then gets only that story and its sources as the brief, and the drafts are saved as `pending` like any others. Both sources are free and need no key. Hot-topic picking is deterministic: outlet coverage first, then overlap with the role's vocabulary, then recency. Coverage can favour widely syndicated stories, so read the topic before you draft from it.
-
 Use `--model` to pick a different Ollama model, and `--host` if Ollama runs on another machine.
+
+## API
+
+The web app talks to a small JSON API (FastAPI). Interactive docs are at http://localhost:8000/docs when the API is running locally.
+
+| Method and path | What it does |
+|---|---|
+| `GET /api/trending?role=` | Role summary, recent stories, and the suggested story |
+| `POST /api/drafts` | Draft posts on one chosen story |
+| `GET /api/posts?status=` | List drafts |
+| `GET /api/posts/{id}` | One draft with its sources and history |
+| `PUT /api/posts/{id}` | Save an edit to a pending draft (fact-checked again) |
+| `POST /api/posts/{id}/decision` | Approve or reject a pending draft |
+
+The API has no login. The Docker setup publishes only the web port (8080), so the API is reachable only from your machine. Don't expose it to a network you don't control.
 
 ## Design decisions
 
 - **Human approval is mandatory.** Drafts start as `pending` even when the editor finds no problems. The code has no path that publishes a post.
-- **Decisions are final.** The store refuses to change an approved or rejected post, and every change is written to `audit_log`.
+- **Decisions are final.** The store refuses to change an approved or rejected post. Edits are allowed only while a draft is pending, and every change is written to the audit log.
 - **The editor is rule-based on purpose.** Rules are predictable and easy to explain. A model-based reviewer could be added later as a second opinion.
 - **The model sits behind an interface.** Agents only know about `ChatModel`, so switching from Ollama to a hosted provider doesn't change the agent code.
+- **Free news sources.** Stories come from Wikipedia and Google News RSS, which need no key.
 
 ## Limitations
 
-- Only drafting uses the model. Research is rule-based, so there is no engagement prediction and no publishing.
-- The research step needs network access to Wikipedia and Google News. Google News search results can change between runs.
+- Fact checking is rule-based. It catches numbers and names that aren't in the sources, but it can't tell whether a claim in words is true. Read every post before you approve it.
+- Trending topics come from Google News only, and results change between runs. Coverage can favour widely syndicated stories.
 - Quality depends on the local model. Small models can produce generic text, so judge drafts by reading them.
-- The editor rules are a starting list. Adjust `MAX_CHARS`, `MAX_HASHTAGS`, and `BANNED_PHRASES` in `editor.py` to match your own standards.
+- There is no login, no scheduling, and no publishing to LinkedIn or X.
+- The editor rules are a starting list. Adjust `MAX_CHARS`, `MAX_HASHTAGS`, and `BANNED_PHRASES` in `src/content_agent/editor.py` to match your own standards.
 
 ## Next steps
 
-1. Add a second editor pass that asks the model whether each draft matches the author's voice.
-2. Add more research sources, such as Hacker News for technical roles.
-3. Connect publishing, behind an interface, once LinkedIn API access is confirmed.
+1. Build the taste profile: a short interview with Ollama, or a scan of your own posts.
+2. Add more trend sources that are free to use, such as Wikimedia pageviews, Hacker News (Algolia), and GDELT. Reddit needs a registered app and its terms should be checked first.
+3. Let the UI show more than one story per draft.
+4. Connect publishing, behind an interface, once LinkedIn and X API access is confirmed. X's API is paid.
+
+## License
+
+MIT. See [LICENSE](LICENSE). Anyone may use, modify, and sell this code. Check the terms of any news or social API you connect before you sell a product built on it.

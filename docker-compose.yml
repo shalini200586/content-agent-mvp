@@ -1,0 +1,54 @@
+# Runs the whole app locally: Ollama (the model), the API, and the web UI.
+#
+#   docker compose up --build
+#
+# Then open http://localhost:8080
+# The first start downloads the model (about 4.7 GB) into the "ollama" volume.
+
+services:
+  ollama:
+    image: ollama/ollama
+    volumes:
+      - ollama:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+    restart: unless-stopped
+
+  # Downloads the model once, then exits.
+  model:
+    image: ollama/ollama
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["ollama", "pull", "qwen2.5:7b"]
+    restart: "no"
+
+  api:
+    build: .
+    depends_on:
+      model:
+        condition: service_completed_successfully
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      CONTENT_AGENT_MODEL: qwen2.5:7b
+      CONTENT_AGENT_ACTOR: web-ui
+    volumes:
+      - data:/data
+    restart: unless-stopped
+
+  web:
+    build: ./web
+    depends_on:
+      - api
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+
+volumes:
+  ollama:
+  data:

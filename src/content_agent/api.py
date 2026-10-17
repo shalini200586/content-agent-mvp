@@ -1,0 +1,182 @@
+"""HTTP API for the web UI.
+
+A thin layer over the same store and workflow the CLI uses. Each request opens its
+own database connection, so the API can run requests in parallel.
+"""
+
+import getpass
+import os
+from typing import Callable, Iterator, Literal
+
+from fastapi import Depends, FastAPI, HTTPException
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
+
+from content_agent.editor import review_post
+from content_agent.llm import ChatModel, OllamaChat
+from content_agent.research import (
+    Headline,
+    Persona,
+    fetch_headlines,
+    fetch_persona,
+    pick_hot_topic,
+    research_query,
+)
+from content_agent.store import InvalidTransition, Post, PostNotFound, Store
+from content_agent.workflow import draft_on_story
+
+
+class DraftRequest(BaseModel):
+    role: str = Field(min_length=2, max_length=120)
+    title: str = Field(min_length=3, max_length=300)
+    link: str = Field(default="", max_length=2000)
+    source: str = Field(default="", max_length=200)
+    voice: str = Field(default="", max_length=500)
+    count: int = Field(default=3, ge=1, le=5)
+
+
+class EditRequest(BaseModel):
+    body: str = Field(min_length=1, max_length=5000)
+
+
+class DecisionRequest(BaseModel):
+    decision: Literal["approved", "rejected"]
+    note: str = Field(default="", max_length=500)
+
+
+def create_app(
+    db_path: str | None = None,
+    model_factory: Callable[[], ChatModel] | None = None,
+    get_persona: Callable[[str], Persona] = fetch_persona,
+    get_headlines: Callable[[str], list[Headline]] = fetch_headlines,
+    actor: str | None = None,
+) -> FastAPI:
+    db_path = db_path or os.environ.get("CONTENT_AGENT_DB", "content_agent.db")
+    make_model = model_factory or (
+        lambda: OllamaChat(model=os.environ.get("CONTENT_AGENT_MODEL", "qwen2.5:7b"))
+    )
+    who = actor or os.environ.get("CONTENT_AGENT_ACTOR") or _current_user()
+    persona_cache: dict[str, Persona] = {}
+
+    app = FastAPI(title="Content Agent", version="0.1.0")
+
+    @app.exception_handler(PostNotFound)
+    def _not_found(_, error: PostNotFound):
+        return JSONResponse({"detail": str(error)}, status_code=404)
+
+    @app.exception_handler(InvalidTransition)
+    def _conflict(_, error: InvalidTransition):
+        return JSONResponse({"detail": str(error)}, status_code=409)
+
+    @app.exception_handler(ValueError)
+    def _bad_value(_, error: ValueError):
+        return JSONResponse({"detail": str(error)}, status_code=422)
+
+    def store_dep() -> Iterator[Store]:
+        store = Store(db_path)
+        try:
+            yield store
+        finally:
+            store.close()
+
+    def persona_for(role: str) -> Persona:
+        key = role.strip().lower()
+        if key not in persona_cache:
+            persona_cache[key] = get_persona(role)
+        return persona_cache[key]
+
+    @app.get("/api/health")
+    def health() -> dict:
+        return {"ok": True}
+
+    @app.get("/api/trending")
+    def trending_stories(role: str) -> dict:
+        try:
+            persona = persona_for(role)
+            headlines = get_headlines(research_query(persona))
+        except OSError as error:
+            raise HTTPException(502, f"could not reach a news source: {error}") from error
+        if not headlines:
+            raise HTTPException(404, "no recent stories found for this role")
+        topic, _ = pick_hot_topic(headlines, persona)
+        return {
+            "persona": {"title": persona.title, "summary": persona.summary, "url": persona.url},
+            "suggested": topic.link,
+            "stories": [_headline_json(h) for h in headlines],
+        }
+
+    @app.post("/api/drafts", status_code=201)
+    def create_drafts_for_story(body: DraftRequest, store: Store = Depends(store_dep)) -> dict:
+        try:
+            persona = persona_for(body.role)
+        except OSError as error:
+            raise HTTPException(502, f"could not reach Wikipedia: {error}") from error
+        story = Headline(title=body.title, link=body.link, source=body.source, published=None)
+        post_ids = draft_on_story(
+            make_model(), store, persona, story, count=body.count, voice=body.voice
+        )
+        return {"post_ids": post_ids}
+
+    @app.get("/api/posts")
+    def list_posts(
+        status: Literal["pending", "approved", "rejected"] | None = None,
+        limit: int = 50,
+        after_id: int = 0,
+        store: Store = Depends(store_dep),
+    ) -> list[dict]:
+        return [_post_json(p) for p in store.list_posts(status, limit=limit, after_id=after_id)]
+
+    @app.get("/api/posts/{post_id}")
+    def get_post(post_id: int, store: Store = Depends(store_dep)) -> dict:
+        post = store.get_post(post_id)
+        return {
+            **_post_json(post),
+            "sources": [dict(row) for row in store.get_sources(post_id)],
+            "history": [dict(row) for row in store.audit_trail(post_id)],
+        }
+
+    @app.put("/api/posts/{post_id}")
+    def edit_post(post_id: int, body: EditRequest, store: Store = Depends(store_dep)) -> dict:
+        store.get_post(post_id)  # 404 first, before any checks
+        # Edits are checked against the same material the draft was written from.
+        rows = store.get_sources(post_id)
+        material = [r["title"] for r in rows] + [r["outlet"] for r in rows if r["outlet"]]
+        review = review_post(body.body, sources=material)
+        return _post_json(store.update_body(post_id, body.body, review.problems, actor=who))
+
+    @app.post("/api/posts/{post_id}/decision")
+    def decide(post_id: int, body: DecisionRequest, store: Store = Depends(store_dep)) -> dict:
+        return _post_json(store.decide(post_id, body.decision, actor=who, note=body.note))
+
+    return app
+
+
+def _headline_json(h: Headline) -> dict:
+    return {
+        "title": h.title,
+        "link": h.link,
+        "source": h.source,
+        "published": h.published.isoformat() if h.published else "",
+    }
+
+
+def _post_json(post: Post) -> dict:
+    return {
+        "id": post.id,
+        "topic": post.topic,
+        "body": post.body,
+        "status": post.status,
+        "problems": post.problems,
+        "created_at": post.created_at,
+    }
+
+
+def _current_user() -> str:
+    try:
+        return getpass.getuser()
+    except (OSError, KeyError):
+        # Inside a container there may be no user name to read.
+        return "local-user"
+
+
+app = create_app()

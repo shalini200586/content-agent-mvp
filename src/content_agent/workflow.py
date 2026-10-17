@@ -53,6 +53,44 @@ class Research:
     post_ids: list[int]
 
 
+def draft_on_story(
+    model: ChatModel,
+    store: Store,
+    persona: Persona,
+    story: Headline,
+    related: list[Headline] | None = None,
+    count: int = 3,
+    voice: str = "",
+) -> list[int]:
+    """Draft posts on one chosen story, grounded only in that story and its sources.
+
+    `related` lists other stories on the same topic. They are optional extra sources.
+    `voice` is the author's own tone notes, passed to the drafter as-is.
+    """
+    sources = [story] + [h for h in (related or []) if h.link != story.link]
+
+    # The drafter only sees the role's description and the stories it is built from.
+    # Its rules already forbid invented facts, so the sources are the whole brief.
+    brief = "\n".join(f"- {h.title} ({h.source or 'unknown outlet'})" for h in sources)
+    voice_notes = f"Writing for: {persona.title}. {persona.summary}\nSource stories:\n{brief}"
+    if voice:
+        voice_notes += f"\nAuthor's voice: {voice}"
+    # Outlet names are facts too: a draft may say "Databricks" because a headline came from it.
+    material = [persona.summary] + [h.title for h in sources] + [h.source for h in sources if h.source]
+    post_ids = create_drafts(
+        model, store, f"{story.title} ({story.link})", voice_notes, count=count, sources=material
+    )
+
+    # The role summary is stored too, so an edited draft is checked against the same material.
+    stories = [(persona.summary, "Wikipedia", persona.url, "")] + [
+        (h.title, h.source, h.link, h.published.isoformat() if h.published else "")
+        for h in sources
+    ]
+    for post_id in post_ids:
+        store.add_sources(post_id, stories)
+    return post_ids
+
+
 def research_and_draft(
     model: ChatModel,
     store: Store,
@@ -65,20 +103,5 @@ def research_and_draft(
     persona = get_persona(role)
     headlines = get_headlines(research_query(persona))
     topic, sources = pick_hot_topic(headlines, persona)
-
-    # The drafter only sees the role's description and the stories it is built from.
-    # Its rules already forbid invented facts, so the sources are the whole brief.
-    brief = "\n".join(f"- {h.title} ({h.source or 'unknown outlet'})" for h in sources)
-    voice_notes = f"Writing for: {persona.title}. {persona.summary}\nSource stories:\n{brief}"
-    # Outlet names are facts too: a draft may say "Databricks" because a headline came from it.
-    material = [persona.summary] + [h.title for h in sources] + [h.source for h in sources if h.source]
-    post_ids = create_drafts(
-        model, store, f"{topic.title} ({topic.link})", voice_notes, count=count, sources=material
-    )
-    stories = [
-        (h.title, h.source, h.link, h.published.isoformat() if h.published else "")
-        for h in sources
-    ]
-    for post_id in post_ids:
-        store.add_sources(post_id, stories)
+    post_ids = draft_on_story(model, store, persona, topic, related=sources, count=count)
     return Research(persona=persona, topic=topic, sources=sources, post_ids=post_ids)
