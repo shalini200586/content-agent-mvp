@@ -7,7 +7,7 @@ from pathlib import Path
 
 from content_agent.llm import OllamaChat
 from content_agent.store import InvalidTransition, PostNotFound, Store
-from content_agent.workflow import create_drafts
+from content_agent.workflow import create_drafts, research_and_draft
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -21,6 +21,14 @@ def build_parser() -> argparse.ArgumentParser:
     draft.add_argument("--count", type=int, default=3)
     draft.add_argument("--model", default="qwen2.5:7b")
     draft.add_argument("--host", default=None, help="Ollama server URL")
+
+    research = sub.add_parser(
+        "research", help="learn what a role does, find a hot topic in its field, and draft posts"
+    )
+    research.add_argument("role", help='a role with a Wikipedia page, e.g. "Data engineer"')
+    research.add_argument("--count", type=int, default=3)
+    research.add_argument("--model", default="qwen2.5:7b")
+    research.add_argument("--host", default=None, help="Ollama server URL")
 
     lst = sub.add_parser("list", help="list posts")
     lst.add_argument("--status", choices=["pending", "approved", "rejected"])
@@ -43,6 +51,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Windows consoles default to cp1252, which turns curly quotes in news headlines into garbage.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     args = build_parser().parse_args(argv)
     store = Store(args.db)
     try:
@@ -53,6 +64,19 @@ def main(argv: list[str] | None = None) -> int:
                 post = store.get_post(post_id)
                 _print_post(post)
             print(f"\n{len(ids)} draft(s) saved as pending.")
+
+        elif args.command == "research":
+            model = OllamaChat(model=args.model, host=args.host)
+            result = research_and_draft(model, store, args.role, count=args.count)
+            print(f"Role: {result.persona.title}")
+            print(f"  {result.persona.summary[:300]}...")
+            print(f"\nHot topic: {result.topic.title}")
+            for source in result.sources:
+                print(f"  - {source.title} ({source.source or 'unknown outlet'})")
+            print(f"  link: {result.topic.link}\n")
+            for post_id in result.post_ids:
+                _print_post(store.get_post(post_id))
+            print(f"{len(result.post_ids)} draft(s) saved as pending.")
 
         elif args.command == "list":
             for post in _all_posts(store, args.status):

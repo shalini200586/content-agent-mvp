@@ -31,7 +31,8 @@ topic + voice notes
 | `drafter.py` | Asks the model for several independent drafts on one topic. |
 | `editor.py` | Deterministic rules. Each rule is a plain function you can test and change. |
 | `store.py` | SQLite tables for posts and an audit log. Enforces that decisions can't be changed. |
-| `workflow.py` | Connects drafting, review, and storage into one step. |
+| `research.py` | Finds what a role does (Wikipedia) and what is currently covered in its field (Google News RSS), then picks the hot topic. |
+| `workflow.py` | Connects drafting, review, and storage into one step, and the research step on top of it. |
 | `cli.py` | The command-line interface. |
 
 ## Setup
@@ -67,7 +68,12 @@ content-agent reject 2 --note "too generic"
 
 # Save approved posts to files
 content-agent export ./approved
+
+# Research a role, find what its field is covering, and draft posts on the hot topic
+content-agent research "Data engineer" --count 3
 ```
+
+`research` reads the role's Wikipedia summary, searches Google News for its field, and picks the story covered by the most outlets. The drafter then gets only that story and its sources as the brief, and the drafts are saved as `pending` like any others. Both sources are free and need no key. Hot-topic picking is deterministic: outlet coverage first, then overlap with the role's vocabulary, then recency. Coverage can favour widely syndicated stories, so read the topic before you draft from it.
 
 Use `--model` to pick a different Ollama model, and `--host` if Ollama runs on another machine.
 
@@ -80,12 +86,13 @@ Use `--model` to pick a different Ollama model, and `--host` if Ollama runs on a
 
 ## Limitations
 
-- Only drafting uses the model. There is no research agent, no engagement prediction, and no publishing.
+- Only drafting uses the model. Research is rule-based, so there is no engagement prediction and no publishing.
+- The research step needs network access to Wikipedia and Google News. Google News search results can change between runs.
 - Quality depends on the local model. Small models can produce generic text, so judge drafts by reading them.
 - The editor rules are a starting list. Adjust `MAX_CHARS`, `MAX_HASHTAGS`, and `BANNED_PHRASES` in `editor.py` to match your own standards.
 
 ## Next steps
 
 1. Add a second editor pass that asks the model whether each draft matches the author's voice.
-2. Add a research step that reads trending topics from public RSS feeds.
+2. Add more research sources, such as Hacker News for technical roles.
 3. Connect publishing, behind an interface, once LinkedIn API access is confirmed.
