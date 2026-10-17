@@ -33,6 +33,16 @@ CREATE TABLE IF NOT EXISTS audit_log (
     actor   TEXT NOT NULL DEFAULT '',
     at      TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS sources (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    post_id   INTEGER NOT NULL REFERENCES posts(id),
+    title     TEXT NOT NULL,
+    outlet    TEXT NOT NULL DEFAULT '',
+    link      TEXT NOT NULL DEFAULT '',
+    published TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_sources_post ON sources(post_id);
 """
 
 
@@ -122,6 +132,20 @@ class Store:
         self._log(post_id, decision, note, actor)
         self.conn.commit()
         return self.get_post(post_id)
+
+    def add_sources(self, post_id: int, sources: list[tuple[str, str, str, str]]) -> None:
+        """Record the stories a draft was built from: (title, outlet, link, published)."""
+        self.conn.executemany(
+            "INSERT INTO sources (post_id, title, outlet, link, published) VALUES (?, ?, ?, ?, ?)",
+            [(post_id, title, outlet, link, published) for title, outlet, link, published in sources],
+        )
+        self.conn.commit()
+
+    def get_sources(self, post_id: int) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT title, outlet, link, published FROM sources WHERE post_id = ? ORDER BY id",
+            (post_id,),
+        ).fetchall()
 
     def audit_trail(self, post_id: int) -> list[sqlite3.Row]:
         return self.conn.execute(

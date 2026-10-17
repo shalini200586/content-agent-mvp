@@ -19,9 +19,9 @@ def test_each_option_is_numbered_in_its_prompt():
     draft_posts(model, "topic", "", count=3)
 
     prompts = [user for _, user in model.calls]
-    assert "Write option 1 of 3." in prompts[0]
-    assert "Write option 2 of 3." in prompts[1]
-    assert "Write option 3 of 3." in prompts[2]
+    assert "Write option 1 of 3, taking" in prompts[0]
+    assert "Write option 2 of 3, taking" in prompts[1]
+    assert "Write option 3 of 3, taking" in prompts[2]
 
 
 def test_default_count_is_three():

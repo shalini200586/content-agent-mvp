@@ -27,13 +27,19 @@ def create_drafts(
     topic: str,
     voice_notes: str,
     count: int = 3,
+    sources: list[str] | None = None,
 ) -> list[int]:
-    """Draft, review, and store. Returns the new post IDs."""
+    """Draft, fact-check, and store. Returns the new post IDs.
+
+    `sources` is the text a draft may rely on. By default that is the topic and
+    the author's voice notes, since those are the only facts the author gave.
+    """
     bodies = draft_posts(model, topic, voice_notes, count=count)
+    material = sources if sources is not None else [topic, voice_notes]
 
     post_ids = []
     for body in bodies:
-        review = review_post(body)
+        review = review_post(body, sources=material)
         post_id = store.add_post(topic, body, review.problems)
         post_ids.append(post_id)
     return post_ids
@@ -64,5 +70,15 @@ def research_and_draft(
     # Its rules already forbid invented facts, so the sources are the whole brief.
     brief = "\n".join(f"- {h.title} ({h.source or 'unknown outlet'})" for h in sources)
     voice_notes = f"Writing for: {persona.title}. {persona.summary}\nSource stories:\n{brief}"
-    post_ids = create_drafts(model, store, f"{topic.title} ({topic.link})", voice_notes, count=count)
+    # Outlet names are facts too: a draft may say "Databricks" because a headline came from it.
+    material = [persona.summary] + [h.title for h in sources] + [h.source for h in sources if h.source]
+    post_ids = create_drafts(
+        model, store, f"{topic.title} ({topic.link})", voice_notes, count=count, sources=material
+    )
+    stories = [
+        (h.title, h.source, h.link, h.published.isoformat() if h.published else "")
+        for h in sources
+    ]
+    for post_id in post_ids:
+        store.add_sources(post_id, stories)
     return Research(persona=persona, topic=topic, sources=sources, post_ids=post_ids)
