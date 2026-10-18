@@ -15,6 +15,8 @@ export interface Trending {
   stories: Story[];
 }
 
+export type Platform = "linkedin" | "x";
+
 export interface PostSummary {
   id: number;
   topic: string;
@@ -22,6 +24,13 @@ export interface PostSummary {
   status: Status;
   problems: string[];
   created_at: string;
+  platform: Platform;
+}
+
+export interface Profile {
+  niche: string;
+  stance: string;
+  voice: string;
 }
 
 export interface PostDetail extends PostSummary {
@@ -45,7 +54,7 @@ export const api = {
   trending: (role: string) =>
     request<Trending>(`/api/trending?role=${encodeURIComponent(role)}`),
 
-  draft: (body: { role: string; story: Story; voice: string; count: number }) =>
+  draft: (body: { role: string; story: Story; voice: string; count: number; platform: Platform }) =>
     request<{ post_ids: number[] }>("/api/drafts", {
       method: "POST",
       body: JSON.stringify({
@@ -55,8 +64,17 @@ export const api = {
         source: body.story.source,
         voice: body.voice,
         count: body.count,
+        platform: body.platform,
       }),
     }),
+
+  profile: () => request<Profile>("/api/profile"),
+
+  saveProfile: (profile: Profile) =>
+    request<Profile>("/api/profile", { method: "PUT", body: JSON.stringify(profile) }),
+
+  scanVoice: (samples: string) =>
+    request<{ voice: string }>("/api/profile/scan", { method: "POST", body: JSON.stringify({ samples }) }),
 
   posts: (status: Status) => request<PostSummary[]>(`/api/posts?status=${status}&limit=100`),
 

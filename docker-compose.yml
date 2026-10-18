@@ -9,7 +9,8 @@ services:
   ollama:
     image: ollama/ollama
     volumes:
-      - ollama:/root/.ollama
+      # Set OLLAMA_DATA to a folder (for example your existing ~/.ollama) to reuse models you already have.
+      - ${OLLAMA_DATA:-ollama}:/root/.ollama
     healthcheck:
       test: ["CMD", "ollama", "list"]
       interval: 5s
@@ -25,7 +26,8 @@ services:
         condition: service_healthy
     environment:
       OLLAMA_HOST: http://ollama:11434
-    entrypoint: ["ollama", "pull", "qwen2.5:7b"]
+    # Skips the download when the model is already present (for example from OLLAMA_DATA).
+    entrypoint: ["sh", "-c", "ollama list | grep -q 'qwen2.5:7b' || ollama pull qwen2.5:7b"]
     restart: "no"
 
   api:

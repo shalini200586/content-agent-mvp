@@ -6,13 +6,13 @@ Everything runs on your own machine with [Ollama](https://ollama.com), so there 
 
 ## What it does
 
-1. **Your niche (built).** You type a role or niche, such as "Data engineer". Its Wikipedia summary anchors the voice of the posts.
-2. **What is hot (built).** The app searches Google News and Hacker News for that niche and lists the recent stories from both. It suggests the one covered by the most outlets, and you can choose any story. Both sources are free and need no key.
-3. **Facts check (built).** Drafts are written only from the story you chose and its sources. The editor flags numbers and names that don't appear in those sources, and it flags banned phrases and long posts.
-4. **Drafts (LinkedIn style).** The model writes several options, each from a different angle. X length limits and per-platform styles are planned.
+1. **Your profile (built, partly).** You save your niche, stance, and voice in the Profile screen, and every draft uses them. The niche also drives the trending search. A voice can be suggested from your own posts. A short interview with the model to build the profile is planned.
+2. **What is hot (built).** The app searches Google News and Hacker News for your niche and lists the recent stories from both. It suggests the one covered by the most outlets, skipping press-release headlines such as staff moves and awards when there is real news. You can choose any story. Both sources are free and need no key.
+3. **Facts check (built).** Drafts are written only from the story you chose and its sources. The editor flags numbers and names that don't appear in those sources. Word forms count as a match, so "acquires" matches "acquiring". It also flags banned phrases and posts over the platform limit.
+4. **Drafts for LinkedIn or X (built).** The model writes several options, each from a different angle, in the style of the platform you choose.
 5. **You decide (built).** Drafts wait as `pending`. You can edit them, then approve or reject. Every change is logged with who made it.
 
-**Planned:** a taste profile built from a short interview with Ollama or from a scan of your own posts, which would replace the niche typed in step 1. A UI for that is also planned.
+**Planned:** a short interview with Ollama to build the profile, and publishing to LinkedIn or X.
 
 ## Run it with Docker
 
@@ -35,6 +35,14 @@ docker compose logs -f api # watch the API log
 ```
 
 Your posts are stored in the `data` volume. To delete them, run `docker compose down -v`.
+
+**Already have the model in Ollama?** Point the stack at your existing model folder so it doesn't download again. Create a file named `.env` next to `docker-compose.yml`:
+
+```
+OLLAMA_DATA=C:/Users/you/.ollama     # Windows; on macOS/Linux use e.g. /home/you/.ollama
+```
+
+**Behind a company proxy or firewall that inspects HTTPS?** The containers don't trust your computer's certificate store, so news lookups fail with a certificate error. Export the proxy's root certificate as a `.crt` file (PEM format) and put it in the `certs/` folder. It's copied into the API image at build time and is git-ignored. Then run `docker compose up --build` again.
 
 To use a different model, change `qwen2.5:7b` in `docker-compose.yml` in both the `model` service and the `api` service's `CONTENT_AGENT_MODEL`.
 
@@ -72,8 +80,9 @@ pytest
 
 ## Web app
 
-- **Find a topic:** type a niche, pick a story from the trending list, add an optional voice note, and choose how many drafts to write.
-- **Drafts:** filter by pending, approved, or rejected. Open a draft to read its sources and any editor warnings, edit the text, then save, approve, or reject it. Approve is locked until your edits are saved.
+- **Find a topic:** type a niche, pick a story from the trending list, choose LinkedIn or X, add an optional voice note, and choose how many drafts to write. The voice box starts with your saved profile voice.
+- **Drafts:** filter by pending, approved, or rejected. Open a draft to read its sources and any editor warnings, edit the text, then save, approve, or reject it. Approve is locked until your edits are saved. X drafts are checked against the 280-character limit.
+- **Profile:** save your niche, stance, and voice. Every draft uses them. To get a starting voice, paste a few of your own posts into "Learn my voice from my posts" and press Suggest voice. The suggestion is only saved when you press Save profile.
 
 ## Command line
 
@@ -105,7 +114,9 @@ The web app talks to a small JSON API (FastAPI). Interactive docs are at http://
 | Method and path | What it does |
 |---|---|
 | `GET /api/trending?role=` | Role summary, recent stories, and the suggested story |
-| `POST /api/drafts` | Draft posts on one chosen story |
+| `POST /api/drafts` | Draft posts on one chosen story (`platform`: `linkedin` or `x`) |
+| `GET /api/profile`, `PUT /api/profile` | Read or save your niche, stance, and voice |
+| `POST /api/profile/scan` | Suggest a voice description from pasted posts (not saved) |
 | `GET /api/posts?status=` | List drafts |
 | `GET /api/posts/{id}` | One draft with its sources and history |
 | `PUT /api/posts/{id}` | Save an edit to a pending draft (fact-checked again) |
@@ -120,10 +131,12 @@ The API has no login. The Docker setup publishes only the web port (8080), so th
 - **The editor is rule-based on purpose.** Rules are predictable and easy to explain. A model-based reviewer could be added later as a second opinion.
 - **The model sits behind an interface.** Agents only know about `ChatModel`, so switching from Ollama to a hosted provider doesn't change the agent code.
 - **Free news sources.** Stories come from Wikipedia, Google News RSS, and Hacker News. None needs a key. If one source is down, the others still work.
+- **Your data stays local.** The profile is a plain JSON file next to the database. The only service it reaches is your local model.
 
 ## Limitations
 
 - Fact checking is rule-based. It catches numbers and names that aren't in the sources, but it can't tell whether a claim in words is true. Read every post before you approve it.
+- Drafting is slow on a laptop without a GPU, so expect a wait, especially when you draft several options at once.
 - Trending topics come from Google News and Hacker News only, and results change between runs. Coverage can favour widely syndicated stories, and press releases sometimes rank high, so read the story before you draft from it.
 - The search uses the role's Wikipedia title, so a niche with an unusual name may find few stories.
 - Quality depends on the local model. Small models can produce generic text, so judge drafts by reading them.
@@ -132,7 +145,7 @@ The API has no login. The Docker setup publishes only the web port (8080), so th
 
 ## Next steps
 
-1. Build the taste profile: a short interview with Ollama, or a scan of your own posts.
+1. Build the profile with a short interview: Ollama asks questions and writes the profile from the answers.
 2. Add more trend sources that are free to use. GDELT is an option but limits requests to one every five seconds. Reddit needs a registered app, and its terms should be checked first.
 3. Let the UI show more than one story per draft.
 4. Connect publishing, behind an interface, once LinkedIn and X API access is confirmed. X's API is paid.

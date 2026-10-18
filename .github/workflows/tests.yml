@@ -17,3 +17,10 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e ".[web,dev]"
       - run: pytest
+
+  images:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t content-agent-api .
+      - run: docker build -t content-agent-web ./web

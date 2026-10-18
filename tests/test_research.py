@@ -116,3 +116,24 @@ def test_research_and_draft_stores_posts_grounded_in_sources(store):
     saved = store.get_post(result.post_ids[0])
     assert saved.topic.startswith(result.topic.title)
     assert saved.status == "pending"
+
+
+def test_promotional_headlines_are_not_picked_when_real_news_exists():
+    from content_agent.research import Headline, Persona, is_promotional, pick_hot_topic
+
+    persona = Persona(title="Data engineer", summary="Builds data pipelines.", url="")
+    promo = Headline("Acme appoints Jane Doe as director of data engineering", "l1", "Wire", None)
+    news = Headline("Snowflake ships new pipeline tooling for data engineers", "l2", "Tech", None)
+    assert is_promotional(promo.title)
+    assert not is_promotional(news.title)
+    topic, _ = pick_hot_topic([promo, news], persona)
+    assert topic.link == "l2"
+
+
+def test_promotional_headline_is_used_when_it_is_the_only_one():
+    from content_agent.research import Headline, Persona, pick_hot_topic
+
+    persona = Persona(title="Data engineer", summary="Builds data pipelines.", url="")
+    promo = Headline("Acme appoints Jane Doe as director of data engineering", "l1", "Wire", None)
+    topic, _ = pick_hot_topic([promo], persona)
+    assert topic.link == "l1"

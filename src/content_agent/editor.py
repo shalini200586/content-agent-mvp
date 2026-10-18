@@ -7,7 +7,8 @@ changed in one place. An LLM reviewer can be added later as a second opinion.
 import re
 from dataclasses import dataclass, field
 
-MAX_CHARS = 1200
+MAX_CHARS = 1200  # LinkedIn post limit used by default
+PLATFORM_LIMITS = {"linkedin": 1200, "x": 280}
 MAX_HASHTAGS = 5
 MAX_UNSUPPORTED_REPORTED = 5
 BANNED_PHRASES = ["guaranteed", "going viral", "[insert", "lorem ipsum"]
@@ -53,13 +54,38 @@ def checkable_details(text: str) -> list[str]:
     return [d for d in seen if d]
 
 
+def _stem(word: str) -> str:
+    """A rough stem so 'acquires', 'acquiring', and 'acquired' match. Good enough for a fact check."""
+    word = word.lower().removesuffix("'s")
+    for suffix in ("ing", "ed", "es", "s"):
+        if word.endswith(suffix) and len(word) - len(suffix) >= 4:
+            return word[: -len(suffix)]
+    return word
+
+
+def _tokens(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9]+", text.lower().replace(",", ""))
+
+
 def unsupported_details(text: str, sources: list[str]) -> list[str]:
-    """Details in the draft that do not appear in any source. Matching ignores case and commas."""
+    """Details in the draft that do not appear in any source.
+
+    A detail is supported when its exact text appears in a source, or when every
+    word in it appears in a source with a matching stem. Case and commas are ignored.
+    """
     corpus = " ".join(sources).lower().replace(",", "")
-    return [d for d in checkable_details(text) if d.lower().replace(",", "") not in corpus]
+    corpus_stems = {_stem(t) for t in _tokens(" ".join(sources))}
+
+    def supported(detail: str) -> bool:
+        if detail.lower().replace(",", "") in corpus:
+            return True
+        words = _tokens(detail)
+        return bool(words) and all(_stem(w) in corpus_stems for w in words)
+
+    return [d for d in checkable_details(text) if not supported(d)]
 
 
-def review_post(text: str, sources: list[str] | None = None) -> Review:
+def review_post(text: str, sources: list[str] | None = None, platform: str = "linkedin") -> Review:
     stripped = text.strip()
     lowered = stripped.lower()
     problems: list[str] = []
@@ -75,8 +101,11 @@ def review_post(text: str, sources: list[str] | None = None) -> Review:
         if len(unsupported) > MAX_UNSUPPORTED_REPORTED:
             problems.append(f"fact check: {len(unsupported) - MAX_UNSUPPORTED_REPORTED} more unsupported details")
 
-    if len(stripped) > MAX_CHARS:
-        problems.append(f"post is {len(stripped)} characters; limit is {MAX_CHARS}")
+    limit = PLATFORM_LIMITS.get(platform)
+    if limit is None:
+        raise ValueError(f"unknown platform {platform!r}; use one of {', '.join(PLATFORM_LIMITS)}")
+    if len(stripped) > limit:
+        problems.append(f"post is {len(stripped)} characters; {platform} limit is {limit}")
 
     hashtags = [word for word in stripped.split() if word.startswith("#")]
     if len(hashtags) > MAX_HASHTAGS:

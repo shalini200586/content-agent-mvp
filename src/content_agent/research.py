@@ -144,11 +144,25 @@ def _words(text: str) -> set[str]:
     return {w for w in re.findall(r"[a-z0-9]+", text.lower()) if len(w) > 3 and w not in STOPWORDS}
 
 
+# Press-release style headlines: staff moves, awards, and corporate announcements.
+# They are real headlines, but they rarely make a post worth writing about.
+PROMOTIONAL_PATTERN = re.compile(
+    r"\b(appoints?|appointed|elevates?|elevated|promotes?|promoted|names?|named (?:as )?(?:head|chief|director|vp)"
+    r"|to (?:director|head|chief|vp)|hires?|hired|joins?|awarded|recognized as|earns?|honou?red)\b",
+    re.IGNORECASE,
+)
+
+
+def is_promotional(title: str) -> bool:
+    return bool(PROMOTIONAL_PATTERN.search(title))
+
+
 def pick_hot_topic(headlines: list[Headline], persona: Persona) -> tuple[Headline, list[Headline]]:
     """Return the headline with the most cross-outlet coverage, and the stories that back it.
 
     Two headlines count as the same story when they share at least three
     significant words. Role vocabulary breaks ties, and recency breaks the rest.
+    Promotional headlines (staff moves, awards) are skipped unless nothing else exists.
     """
     if not headlines:
         raise ValueError("no headlines found for this role")
@@ -166,7 +180,9 @@ def pick_hot_topic(headlines: list[Headline], persona: Persona) -> tuple[Headlin
         recency = -index  # headlines are already newest first
         return (coverage, relevance, recency)
 
-    best = max(range(len(headlines)), key=score)
+    # Prefer real news. Press-release headlines are used only when nothing else is left.
+    candidates = [i for i, h in enumerate(headlines) if not is_promotional(h.title)] or list(range(len(headlines)))
+    best = max(candidates, key=score)
     backing = [headlines[best]] + [
         h for i, h in enumerate(headlines)
         if i != best and len(word_sets[best] & word_sets[i]) >= 3

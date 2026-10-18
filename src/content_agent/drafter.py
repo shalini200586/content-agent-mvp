@@ -16,6 +16,16 @@ SYSTEM_PROMPT = (
     "Keep the post under 1200 characters."
 )
 
+X_SYSTEM_PROMPT = (
+    "You write posts for X (formerly Twitter) in the first person. "
+    "Sound like a specific person, not a brand. Be short and direct. "
+    "Use only facts that appear in the source material or the author's notes. "
+    "Never add numbers, dates, names, quotes, or results that are not there. "
+    "Do not use emojis. Use at most one hashtag. "
+    "Keep the post under 280 characters."
+)
+PLATFORM_PROMPTS = {"linkedin": SYSTEM_PROMPT, "x": X_SYSTEM_PROMPT}
+
 # Each option takes a different angle, so the drafts are not three rewrites of one idea.
 ANGLES = [
     "a counterintuitive take that challenges the usual view",
@@ -30,10 +40,14 @@ def draft_posts(
     topic: str,
     voice_notes: str,
     count: int = 3,
+    platform: str = "linkedin",
 ) -> list[str]:
     """Ask the model for `count` independent drafts on the same topic."""
     if count < 1:
         raise ValueError("count must be at least 1")
+    if platform not in PLATFORM_PROMPTS:
+        raise ValueError(f"unknown platform {platform!r}; use one of {', '.join(PLATFORM_PROMPTS)}")
+    system_prompt = PLATFORM_PROMPTS[platform]
 
     drafts = []
     for option in range(1, count + 1):
@@ -44,5 +58,5 @@ def draft_posts(
             f"Write option {option} of {count}, taking {angle}. "
             "Return only the post text, with no introduction or commentary."
         )
-        drafts.append(model.complete(SYSTEM_PROMPT, user_prompt))
+        drafts.append(model.complete(system_prompt, user_prompt))
     return drafts

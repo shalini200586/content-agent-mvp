@@ -5,3 +5,5 @@ __pycache__/
 *.egg-info/
 node_modules/
 web/dist/
+certs/*.crt
+.env

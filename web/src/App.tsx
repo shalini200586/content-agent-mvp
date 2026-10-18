@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, PostDetail, PostSummary, Status, Story, Trending } from "./api";
+import { api, Platform, PostDetail, PostSummary, Profile, Status, Story, Trending } from "./api";
 
-type Tab = "find" | "drafts";
+type Tab = "find" | "drafts" | "profile";
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("find");
@@ -18,6 +18,9 @@ export default function App() {
           <button role="tab" aria-selected={tab === "drafts"} onClick={() => setTab("drafts")}>
             Drafts
           </button>
+          <button role="tab" aria-selected={tab === "profile"} onClick={() => setTab("profile")}>
+            Profile
+          </button>
         </nav>
       </header>
 
@@ -29,8 +32,10 @@ export default function App() {
               setTab("drafts");
             }}
           />
-        ) : (
+        ) : tab === "drafts" ? (
           <Drafts focusId={pendingFocus} onFocusHandled={() => setPendingFocus(null)} />
+        ) : (
+          <ProfileScreen />
         )}
       </main>
     </div>
@@ -41,10 +46,18 @@ function FindTopic({ onDrafted }: { onDrafted: (postId: number) => void }) {
   const [role, setRole] = useState("");
   const [voice, setVoice] = useState("");
   const [count, setCount] = useState(3);
+  const [platform, setPlatform] = useState<Platform>("linkedin");
   const [result, setResult] = useState<Trending | null>(null);
   const [chosen, setChosen] = useState<Story | null>(null);
   const [busy, setBusy] = useState<"search" | "draft" | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Start from the saved voice in the profile, so the author does not retype it.
+  useEffect(() => {
+    api.profile().then((profile) => {
+      if (profile.voice) setVoice((current) => current || profile.voice);
+    }).catch(() => {});
+  }, []);
 
   async function search() {
     setBusy("search");
@@ -67,7 +80,7 @@ function FindTopic({ onDrafted }: { onDrafted: (postId: number) => void }) {
     setBusy("draft");
     setError(null);
     try {
-      const { post_ids } = await api.draft({ role: role.trim(), story: chosen, voice, count });
+      const { post_ids } = await api.draft({ role: role.trim(), story: chosen, voice, count, platform });
       onDrafted(post_ids[0]);
     } catch (e) {
       setError((e as Error).message);
@@ -147,6 +160,13 @@ function FindTopic({ onDrafted }: { onDrafted: (postId: number) => void }) {
               />
             </label>
             <div className="row between">
+              <label className="field inline">
+                <span>Platform</span>
+                <select value={platform} onChange={(e) => setPlatform(e.target.value as Platform)}>
+                  <option value="linkedin">LinkedIn</option>
+                  <option value="x">X</option>
+                </select>
+              </label>
               <label className="field inline">
                 <span>Drafts</span>
                 <select value={count} onChange={(e) => setCount(Number(e.target.value))}>
@@ -259,7 +279,7 @@ function Drafts({ focusId, onFocusHandled }: { focusId: number | null; onFocusHa
               >
                 <span className="post-topic">{post.topic.split(" (")[0]}</span>
                 <span className="muted small">
-                  #{post.id}
+                  #{post.id} · {post.platform === "x" ? "X" : "LinkedIn"}
                   {post.problems.length > 0 && <span className="badge warn">{post.problems.length} to check</span>}
                 </span>
               </button>
@@ -335,6 +355,109 @@ function Drafts({ focusId, onFocusHandled }: { focusId: number | null; onFocusHa
           </>
         )}
       </div>
+    </section>
+  );
+}
+
+function ProfileScreen() {
+  const [profile, setProfile] = useState<Profile>({ niche: "", stance: "", voice: "" });
+  const [samples, setSamples] = useState("");
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState<"save" | "scan" | null>(null);
+
+  useEffect(() => {
+    api.profile().then(setProfile).catch((e) => setError((e as Error).message));
+  }, []);
+
+  async function save() {
+    setBusy("save");
+    setError(null);
+    setMessage(null);
+    try {
+      setProfile(await api.saveProfile(profile));
+      setMessage("Saved. New drafts will use this profile.");
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function scan() {
+    setBusy("scan");
+    setError(null);
+    setMessage(null);
+    try {
+      const { voice } = await api.scanVoice(samples);
+      // Shown in the voice box for review. Nothing is saved until the author presses Save.
+      setProfile((current) => ({ ...current, voice }));
+      setMessage("Suggested voice added below. Edit it if needed, then save.");
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <section className="stack">
+      <div className="card">
+        <h2>Your profile</h2>
+        <p className="muted">The niche, stance, and voice that every draft is written from.</p>
+
+        <label className="field">
+          <span>Niche</span>
+          <input
+            value={profile.niche}
+            onChange={(e) => setProfile({ ...profile, niche: e.target.value })}
+            placeholder="e.g. Data engineering"
+          />
+        </label>
+        <label className="field">
+          <span>Stance (what you believe about it)</span>
+          <input
+            value={profile.stance}
+            onChange={(e) => setProfile({ ...profile, stance: e.target.value })}
+            placeholder="e.g. Reliable pipelines matter more than new tools"
+          />
+        </label>
+        <label className="field">
+          <span>Voice</span>
+          <textarea
+            rows={3}
+            value={profile.voice}
+            onChange={(e) => setProfile({ ...profile, voice: e.target.value })}
+            placeholder="calm, practical, first person"
+          />
+        </label>
+        <div className="row between">
+          <span className="muted small">{message}</span>
+          <button className="primary" onClick={save} disabled={busy !== null}>
+            {busy === "save" ? "Saving..." : "Save profile"}
+          </button>
+        </div>
+      </div>
+
+      <div className="card">
+        <h3>Learn my voice from my posts</h3>
+        <p className="muted small">Paste a few of your own posts. The model suggests a voice description, which you can edit.</p>
+        <textarea
+          rows={6}
+          value={samples}
+          onChange={(e) => setSamples(e.target.value)}
+          placeholder="Paste at least a few sentences of your posts here"
+          aria-label="Sample posts"
+        />
+        <div className="row actions">
+          <span className="spacer" />
+          <button onClick={scan} disabled={busy !== null || samples.trim().length < 50}>
+            {busy === "scan" ? "Reading..." : "Suggest voice"}
+          </button>
+        </div>
+      </div>
+
+      {error && <div className="notice error">{error}</div>}
     </section>
   );
 }

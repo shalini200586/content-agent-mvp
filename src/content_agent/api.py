@@ -6,6 +6,7 @@ own database connection, so the API can run requests in parallel.
 
 import getpass
 import os
+from dataclasses import asdict
 from typing import Callable, Iterator, Literal
 
 from fastapi import Depends, FastAPI, HTTPException
@@ -13,6 +14,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from content_agent.editor import review_post
+from content_agent.profile import Profile, describe_voice, load_profile, save_profile
 from content_agent.llm import ChatModel, OllamaChat
 from content_agent.research import (
     Headline,
@@ -33,6 +35,17 @@ class DraftRequest(BaseModel):
     source: str = Field(default="", max_length=200)
     voice: str = Field(default="", max_length=500)
     count: int = Field(default=3, ge=1, le=5)
+    platform: Literal["linkedin", "x"] = "linkedin"
+
+
+class ProfileRequest(BaseModel):
+    niche: str = Field(default="", max_length=200)
+    stance: str = Field(default="", max_length=500)
+    voice: str = Field(default="", max_length=500)
+
+
+class ScanRequest(BaseModel):
+    samples: str = Field(min_length=50, max_length=8000)
 
 
 class EditRequest(BaseModel):
@@ -56,6 +69,9 @@ def create_app(
         lambda: OllamaChat(model=os.environ.get("CONTENT_AGENT_MODEL", "qwen2.5:7b"))
     )
     who = actor or os.environ.get("CONTENT_AGENT_ACTOR") or _current_user()
+    profile_path = os.environ.get("CONTENT_AGENT_PROFILE") or os.path.join(
+        os.path.dirname(os.path.abspath(db_path)), "profile.json"
+    )
     persona_cache: dict[str, Persona] = {}
 
     app = FastAPI(title="Content Agent", version="0.1.0")
@@ -105,15 +121,34 @@ def create_app(
             "stories": [_headline_json(h) for h in headlines],
         }
 
+    @app.get("/api/profile")
+    def get_profile() -> dict:
+        return asdict(load_profile(profile_path))
+
+    @app.put("/api/profile")
+    def put_profile(body: ProfileRequest) -> dict:
+        profile = Profile(niche=body.niche.strip(), stance=body.stance.strip(), voice=body.voice.strip())
+        save_profile(profile_path, profile)
+        return asdict(profile)
+
+    @app.post("/api/profile/scan")
+    def scan_profile(body: ScanRequest) -> dict:
+        """Suggest a voice description from sample posts. Nothing is saved until the author accepts it."""
+        return {"voice": describe_voice(make_model(), body.samples)}
+
     @app.post("/api/drafts", status_code=201)
     def create_drafts_for_story(body: DraftRequest, store: Store = Depends(store_dep)) -> dict:
         try:
             persona = persona_for(body.role)
         except OSError as error:
             raise HTTPException(502, f"could not reach Wikipedia: {error}") from error
+        profile = load_profile(profile_path)
+        voice = body.voice or profile.voice
+        if profile.stance:
+            voice = f"{voice}. Stance: {profile.stance}" if voice else f"Stance: {profile.stance}"
         story = Headline(title=body.title, link=body.link, source=body.source, published=None)
         post_ids = draft_on_story(
-            make_model(), store, persona, story, count=body.count, voice=body.voice
+            make_model(), store, persona, story, count=body.count, voice=voice, platform=body.platform
         )
         return {"post_ids": post_ids}
 
@@ -141,7 +176,7 @@ def create_app(
         # Edits are checked against the same material the draft was written from.
         rows = store.get_sources(post_id)
         material = [r["title"] for r in rows] + [r["outlet"] for r in rows if r["outlet"]]
-        review = review_post(body.body, sources=material)
+        review = review_post(body.body, sources=material, platform=store.get_post(post_id).platform)
         return _post_json(store.update_body(post_id, body.body, review.problems, actor=who))
 
     @app.post("/api/posts/{post_id}/decision")
@@ -168,6 +203,7 @@ def _post_json(post: Post) -> dict:
         "status": post.status,
         "problems": post.problems,
         "created_at": post.created_at,
+        "platform": post.platform,
     }
 
 

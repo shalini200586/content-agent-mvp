@@ -28,19 +28,20 @@ def create_drafts(
     voice_notes: str,
     count: int = 3,
     sources: list[str] | None = None,
+    platform: str = "linkedin",
 ) -> list[int]:
     """Draft, fact-check, and store. Returns the new post IDs.
 
     `sources` is the text a draft may rely on. By default that is the topic and
     the author's voice notes, since those are the only facts the author gave.
     """
-    bodies = draft_posts(model, topic, voice_notes, count=count)
+    bodies = draft_posts(model, topic, voice_notes, count=count, platform=platform)
     material = sources if sources is not None else [topic, voice_notes]
 
     post_ids = []
     for body in bodies:
-        review = review_post(body, sources=material)
-        post_id = store.add_post(topic, body, review.problems)
+        review = review_post(body, sources=material, platform=platform)
+        post_id = store.add_post(topic, body, review.problems, platform=platform)
         post_ids.append(post_id)
     return post_ids
 
@@ -61,6 +62,7 @@ def draft_on_story(
     related: list[Headline] | None = None,
     count: int = 3,
     voice: str = "",
+    platform: str = "linkedin",
 ) -> list[int]:
     """Draft posts on one chosen story, grounded only in that story and its sources.
 
@@ -78,7 +80,13 @@ def draft_on_story(
     # Outlet names are facts too: a draft may say "Databricks" because a headline came from it.
     material = [persona.summary] + [h.title for h in sources] + [h.source for h in sources if h.source]
     post_ids = create_drafts(
-        model, store, f"{story.title} ({story.link})", voice_notes, count=count, sources=material
+        model,
+        store,
+        f"{story.title} ({story.link})",
+        voice_notes,
+        count=count,
+        sources=material,
+        platform=platform,
     )
 
     # The role summary is stored too, so an edited draft is checked against the same material.

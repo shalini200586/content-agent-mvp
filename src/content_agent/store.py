@@ -20,7 +20,8 @@ CREATE TABLE IF NOT EXISTS posts (
     body       TEXT NOT NULL,
     status     TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'rejected')),
     problems   TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    platform   TEXT NOT NULL DEFAULT 'linkedin'
 );
 
 CREATE INDEX IF NOT EXISTS idx_posts_status ON posts(status, id);
@@ -54,6 +55,7 @@ class Post:
     status: str
     problems: list[str]
     created_at: str
+    platform: str = "linkedin"
 
 
 class PostNotFound(Exception):
@@ -73,17 +75,27 @@ class Store:
         self.conn = sqlite3.connect(path)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
+        # Databases created before the platform column existed get it here.
+        columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(posts)")}
+        if "platform" not in columns:
+            self.conn.execute("ALTER TABLE posts ADD COLUMN platform TEXT NOT NULL DEFAULT 'linkedin'")
+            self.conn.commit()
 
     def close(self) -> None:
         self.conn.close()
 
     def add_post(
-        self, topic: str, body: str, problems: list[str], actor: str = "drafter"
+        self,
+        topic: str,
+        body: str,
+        problems: list[str],
+        actor: str = "drafter",
+        platform: str = "linkedin",
     ) -> int:
         cursor = self.conn.execute(
-            "INSERT INTO posts (topic, body, status, problems, created_at) "
-            "VALUES (?, ?, 'pending', ?, ?)",
-            (topic, body, "\n".join(problems), _now()),
+            "INSERT INTO posts (topic, body, status, problems, created_at, platform) "
+            "VALUES (?, ?, 'pending', ?, ?, ?)",
+            (topic, body, "\n".join(problems), _now(), platform),
         )
         post_id = cursor.lastrowid
         self._log(post_id, "created", f"{len(problems)} editor problem(s)", actor)
@@ -188,4 +200,5 @@ def _to_post(row: sqlite3.Row) -> Post:
         status=row["status"],
         problems=problems,
         created_at=row["created_at"],
+        platform=row["platform"],
     )

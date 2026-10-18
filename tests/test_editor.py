@@ -39,3 +39,24 @@ def test_model_preamble_is_caught():
     review = review_post("Here is your post: we launched a new feature.")
     assert not review.passed
     assert any("preamble" in problem for problem in review.problems)
+
+
+def test_word_forms_match_their_source():
+    from content_agent.editor import unsupported_details
+
+    sources = ["Snowflake acquires TensorStax to speed up agentic AI."]
+    assert unsupported_details("Snowflake is acquiring TensorStax.", sources) == []
+
+
+def test_x_platform_uses_280_character_limit():
+    text = "a" * 281
+    assert not review_post(text, platform="x").passed
+    assert review_post("a" * 280, platform="x").passed
+    assert review_post("a" * 281, platform="linkedin").passed
+
+
+def test_unknown_platform_is_rejected():
+    import pytest
+
+    with pytest.raises(ValueError):
+        review_post("hello", platform="myspace")
