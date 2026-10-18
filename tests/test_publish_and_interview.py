@@ -26,6 +26,7 @@ def client(tmp_path, monkeypatch):
         get_persona=lambda role: PERSONA,
         get_headlines=lambda query: [STORY],
         actor="tester",
+        background=False,
     )
     return TestClient(app)
 

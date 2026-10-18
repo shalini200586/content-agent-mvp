@@ -38,6 +38,7 @@ def client(tmp_path):
         get_persona=lambda role: PERSONA,
         get_headlines=lambda query: STORIES,
         actor="tester",
+        background=False,
     )
     return TestClient(app)
 
@@ -166,3 +167,61 @@ def test_unknown_post_is_404(client):
 def test_bad_draft_request_is_rejected(client):
     response = client.post("/api/drafts", json={"role": "x", "title": "y", "count": 0})
     assert response.status_code == 422
+
+
+def test_drafts_run_in_background_and_can_be_polled(tmp_path):
+    import time
+
+    app = create_app(
+        db_path=str(tmp_path / "bg.db"),
+        model_factory=lambda: FakeChat(["background draft"]),
+        get_persona=lambda role: PERSONA,
+        get_headlines=lambda query: STORIES,
+        actor="tester",
+    )
+    client = TestClient(app)
+    job = client.post(
+        "/api/drafts", json={"role": "Data engineer", "title": STORIES[0].title, "count": 1}
+    ).json()
+    assert job["job_id"]
+
+    status = {}
+    for _ in range(100):
+        status = client.get(f"/api/jobs/{job['job_id']}").json()
+        if status["status"] != "running":
+            break
+        time.sleep(0.05)
+    assert status["status"] == "done"
+    assert len(status["post_ids"]) == 1
+
+
+def test_failed_draft_job_reports_the_error(tmp_path):
+    import time
+
+    class BrokenChat:
+        def complete(self, system, user):
+            raise RuntimeError("model is not running")
+
+    app = create_app(
+        db_path=str(tmp_path / "bg.db"),
+        model_factory=lambda: BrokenChat(),
+        get_persona=lambda role: PERSONA,
+        get_headlines=lambda query: STORIES,
+        actor="tester",
+    )
+    client = TestClient(app)
+    job_id = client.post(
+        "/api/drafts", json={"role": "Data engineer", "title": STORIES[0].title, "count": 1}
+    ).json()["job_id"]
+    status = {}
+    for _ in range(100):
+        status = client.get(f"/api/jobs/{job_id}").json()
+        if status["status"] != "running":
+            break
+        time.sleep(0.05)
+    assert status["status"] == "error"
+    assert "model is not running" in status["error"]
+
+
+def test_unknown_job_is_404(client):
+    assert client.get("/api/jobs/missing").status_code == 404

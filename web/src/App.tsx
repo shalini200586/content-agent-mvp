@@ -80,8 +80,14 @@ function FindTopic({ onDrafted }: { onDrafted: (postId: number) => void }) {
     setBusy("draft");
     setError(null);
     try {
-      const { post_ids } = await api.draft({ role: role.trim(), story: chosen, voice, count, platform });
-      onDrafted(post_ids[0]);
+      // Drafting runs in the background, so poll until it finishes.
+      let job = await api.draft({ role: role.trim(), story: chosen, voice, count, platform });
+      while (job.status === "running") {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        job = await api.job(job.job_id);
+      }
+      if (job.status === "error") throw new Error(job.error || "drafting failed");
+      onDrafted(job.post_ids[0]);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -178,7 +184,7 @@ function FindTopic({ onDrafted }: { onDrafted: (postId: number) => void }) {
                 </select>
               </label>
               <button className="primary" disabled={!chosen || busy !== null} onClick={draft}>
-                {busy === "draft" ? "Writing..." : "Draft on this story"}
+                {busy === "draft" ? "Writing (this can take a few minutes)..." : "Draft on this story"}
               </button>
             </div>
           </div>

@@ -27,6 +27,13 @@ export interface PostSummary {
   platform: Platform;
 }
 
+export interface DraftJob {
+  job_id: string;
+  status: "running" | "done" | "error";
+  post_ids: number[];
+  error: string;
+}
+
 export interface Profile {
   niche: string;
   stance: string;
@@ -55,7 +62,7 @@ export const api = {
     request<Trending>(`/api/trending?role=${encodeURIComponent(role)}`),
 
   draft: (body: { role: string; story: Story; voice: string; count: number; platform: Platform }) =>
-    request<{ post_ids: number[] }>("/api/drafts", {
+    request<DraftJob>("/api/drafts", {
       method: "POST",
       body: JSON.stringify({
         role: body.role,
@@ -67,6 +74,8 @@ export const api = {
         platform: body.platform,
       }),
     }),
+
+  job: (id: string) => request<DraftJob>(`/api/jobs/${id}`),
 
   profile: () => request<Profile>("/api/profile"),
 

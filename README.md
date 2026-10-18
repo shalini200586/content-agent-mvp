@@ -154,7 +154,7 @@ The API has no login. Publishing is off unless you set the live tokens. The Dock
 ## Limitations
 
 - Fact checking is rule-based. It catches numbers and names that aren't in the sources, but it can't tell whether a claim in words is true. Read every post before you approve it.
-- Drafting is slow on a laptop without a GPU, so expect a wait, especially when you draft several options at once.
+- Drafting is slow on a laptop without a GPU. Each draft takes about a minute, so three drafts take a few minutes. The app runs drafting in the background and shows progress, but it still takes that long.
 - Trending topics come from Google News and Hacker News only, and results change between runs. Coverage can favour widely syndicated stories, and press releases sometimes rank high, so read the story before you draft from it.
 - The search uses the role's Wikipedia title, so a niche with an unusual name may find few stories.
 - Quality depends on the local model. Small models can produce generic text, so judge drafts by reading them.

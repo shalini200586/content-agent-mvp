@@ -6,6 +6,8 @@ own database connection, so the API can run requests in parallel.
 
 import getpass
 import os
+import threading
+import uuid
 from dataclasses import asdict
 from typing import Callable, Iterator, Literal
 
@@ -80,6 +82,7 @@ def create_app(
     get_persona: Callable[[str], Persona] = fetch_persona,
     get_headlines: Callable[[str], list[Headline]] = fetch_all_headlines,
     actor: str | None = None,
+    background: bool = True,
 ) -> FastAPI:
     db_path = db_path or os.environ.get("CONTENT_AGENT_DB", "content_agent.db")
     make_model = model_factory or (
@@ -90,6 +93,9 @@ def create_app(
         os.path.dirname(os.path.abspath(db_path)), "profile.json"
     )
     persona_cache: dict[str, Persona] = {}
+    # Drafting takes minutes on a laptop, so it runs in the background and the client polls.
+    # State is kept in memory: fine for one local user, lost on restart.
+    jobs: dict[str, dict] = {}
 
     app = FastAPI(title="Content Agent", version="0.1.0")
 
@@ -179,8 +185,20 @@ def create_app(
         store.record_publication(post_id, url, actor=who)
         return {"mode": publish_mode(), "result": url}
 
+    def run_draft_job(job_id: str, persona: Persona, story: Headline, voice: str, body: DraftRequest) -> None:
+        store = Store(db_path)
+        try:
+            post_ids = draft_on_story(
+                make_model(), store, persona, story, count=body.count, voice=voice, platform=body.platform
+            )
+            jobs[job_id] = {"status": "done", "post_ids": post_ids, "error": ""}
+        except Exception as error:  # the job record carries the message to the client
+            jobs[job_id] = {"status": "error", "post_ids": [], "error": str(error)}
+        finally:
+            store.close()
+
     @app.post("/api/drafts", status_code=201)
-    def create_drafts_for_story(body: DraftRequest, store: Store = Depends(store_dep)) -> dict:
+    def create_drafts_for_story(body: DraftRequest) -> dict:
         try:
             persona = persona_for(body.role)
         except OSError as error:
@@ -190,10 +208,22 @@ def create_app(
         if profile.stance:
             voice = f"{voice}. Stance: {profile.stance}" if voice else f"Stance: {profile.stance}"
         story = Headline(title=body.title, link=body.link, source=body.source, published=None)
-        post_ids = draft_on_story(
-            make_model(), store, persona, story, count=body.count, voice=voice, platform=body.platform
-        )
-        return {"post_ids": post_ids}
+
+        job_id = uuid.uuid4().hex
+        jobs[job_id] = {"status": "running", "post_ids": [], "error": ""}
+        if background:
+            threading.Thread(
+                target=run_draft_job, args=(job_id, persona, story, voice, body), daemon=True
+            ).start()
+        else:
+            run_draft_job(job_id, persona, story, voice, body)
+        return {"job_id": job_id, **jobs[job_id]}
+
+    @app.get("/api/jobs/{job_id}")
+    def job_status(job_id: str) -> dict:
+        if job_id not in jobs:
+            raise HTTPException(404, f"no job with id {job_id}")
+        return {"job_id": job_id, **jobs[job_id]}
 
     @app.get("/api/posts")
     def list_posts(

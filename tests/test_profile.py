@@ -49,6 +49,7 @@ def client(tmp_path):
         get_persona=lambda role: PERSONA,
         get_headlines=lambda query: [STORY],
         actor="tester",
+        background=False,
     )
     return TestClient(app)
 
@@ -87,6 +88,7 @@ def test_profile_voice_is_used_when_request_has_none(tmp_path):
         get_persona=lambda role: PERSONA,
         get_headlines=lambda query: [STORY],
         actor="tester",
+        background=False,
     )
     save_profile(tmp_path / "profile.json", Profile(voice="warm and direct", stance="pipelines first"))
 
