@@ -14,7 +14,15 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from content_agent.editor import review_post
-from content_agent.profile import Profile, describe_voice, load_profile, save_profile
+from content_agent.profile import (
+    Profile,
+    describe_voice,
+    interview_question,
+    load_profile,
+    propose_profile,
+    save_profile,
+)
+from content_agent.publish import PublishError, publish_mode, publisher_for
 from content_agent.llm import ChatModel, OllamaChat
 from content_agent.research import (
     Headline,
@@ -46,6 +54,15 @@ class ProfileRequest(BaseModel):
 
 class ScanRequest(BaseModel):
     samples: str = Field(min_length=50, max_length=8000)
+
+
+class InterviewTurn(BaseModel):
+    question: str = Field(max_length=500)
+    answer: str = Field(max_length=1000)
+
+
+class InterviewRequest(BaseModel):
+    history: list[InterviewTurn] = Field(default_factory=list, max_length=10)
 
 
 class EditRequest(BaseModel):
@@ -135,6 +152,32 @@ def create_app(
     def scan_profile(body: ScanRequest) -> dict:
         """Suggest a voice description from sample posts. Nothing is saved until the author accepts it."""
         return {"voice": describe_voice(make_model(), body.samples)}
+
+    @app.post("/api/profile/interview/question")
+    def interview_next(body: InterviewRequest) -> dict:
+        """The next interview question, or done once enough have been answered."""
+        question = interview_question(make_model(), [(t.question, t.answer) for t in body.history])
+        return {"done": question is None, "question": question or ""}
+
+    @app.post("/api/profile/interview/profile")
+    def interview_profile(body: InterviewRequest) -> dict:
+        """A profile built from the answers. Nothing is saved until the author accepts it."""
+        return asdict(propose_profile(make_model(), [(t.question, t.answer) for t in body.history]))
+
+    @app.get("/api/publish/status")
+    def publish_status() -> dict:
+        return {"mode": publish_mode()}
+
+    @app.post("/api/posts/{post_id}/publish")
+    def publish_post(post_id: int, store: Store = Depends(store_dep)) -> dict:
+        post = store.get_post(post_id)
+        try:
+            publisher = publisher_for(post.platform)
+            url = publisher.publish(post.body)
+        except PublishError as error:
+            raise HTTPException(502, str(error)) from error
+        store.record_publication(post_id, url, actor=who)
+        return {"mode": publish_mode(), "result": url}
 
     @app.post("/api/drafts", status_code=201)
     def create_drafts_for_story(body: DraftRequest, store: Store = Depends(store_dep)) -> dict:

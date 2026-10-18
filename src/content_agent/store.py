@@ -164,6 +164,16 @@ class Store:
         self.conn.commit()
         return self.get_post(post_id)
 
+    def record_publication(self, post_id: int, detail: str, actor: str) -> None:
+        """Log that an approved post went out. A post can be published only once."""
+        post = self.get_post(post_id)
+        if post.status != "approved":
+            raise InvalidTransition(f"post {post_id} is {post.status}; only approved posts can be published")
+        if any(row["event"] == "published" for row in self.audit_trail(post_id)):
+            raise InvalidTransition(f"post {post_id} has already been published")
+        self._log(post_id, "published", detail, actor)
+        self.conn.commit()
+
     def add_sources(self, post_id: int, sources: list[tuple[str, str, str, str]]) -> None:
         """Record the stories a draft was built from: (title, outlet, link, published)."""
         self.conn.executemany(

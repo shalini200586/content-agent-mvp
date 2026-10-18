@@ -6,13 +6,12 @@ Everything runs on your own machine with [Ollama](https://ollama.com), so there 
 
 ## What it does
 
-1. **Your profile (built, partly).** You save your niche, stance, and voice in the Profile screen, and every draft uses them. The niche also drives the trending search. A voice can be suggested from your own posts. A short interview with the model to build the profile is planned.
+1. **Your profile (built).** You save your niche, stance, and voice in the Profile screen, and every draft uses them. The niche also drives the trending search. You can build the profile in three ways: answer five questions from the model in an interview, paste some of your posts so the model suggests a voice, or type it yourself. Nothing is saved until you press Save profile.
 2. **What is hot (built).** The app searches Google News and Hacker News for your niche and lists the recent stories from both. It suggests the one covered by the most outlets, skipping press-release headlines such as staff moves and awards when there is real news. You can choose any story. Both sources are free and need no key.
 3. **Facts check (built).** Drafts are written only from the story you chose and its sources. The editor flags numbers and names that don't appear in those sources. Word forms count as a match, so "acquires" matches "acquiring". It also flags banned phrases and posts over the platform limit.
 4. **Drafts for LinkedIn or X (built).** The model writes several options, each from a different angle, in the style of the platform you choose.
 5. **You decide (built).** Drafts wait as `pending`. You can edit them, then approve or reject. Every change is logged with who made it.
-
-**Planned:** a short interview with Ollama to build the profile, and publishing to LinkedIn or X.
+6. **Publishing (built, off by default).** Approved posts can be published to LinkedIn or X. By default nothing is sent: the button only records the step. See [Publishing](#publishing).
 
 ## Run it with Docker
 
@@ -84,6 +83,22 @@ pytest
 - **Drafts:** filter by pending, approved, or rejected. Open a draft to read its sources and any editor warnings, edit the text, then save, approve, or reject it. Approve is locked until your edits are saved. X drafts are checked against the 280-character limit.
 - **Profile:** save your niche, stance, and voice. Every draft uses them. To get a starting voice, paste a few of your own posts into "Learn my voice from my posts" and press Suggest voice. The suggestion is only saved when you press Save profile.
 
+## Publishing
+
+Only approved posts can be published, and each post can be published once. The publish step is recorded in the audit log.
+
+- **Default: dry run.** Nothing is sent. The Publish button records the step and says "Dry run".
+- **Live.** Set these before starting the app (in `.env` for Docker, or in your shell):
+
+  ```
+  CONTENT_AGENT_PUBLISH=live
+  X_ACCESS_TOKEN=...                 # for X posts; needs an X developer account (paid API tiers)
+  LINKEDIN_ACCESS_TOKEN=...          # for LinkedIn posts; needs a LinkedIn app with posting permission
+  LINKEDIN_AUTHOR_URN=urn:li:person:...
+  ```
+
+The HTTP calls follow the public X and LinkedIn APIs, but they have **not been tested against a live account**. Check the current API versions and terms before going live. Automated posting may breach a platform's terms if misused, so keep a person approving each post.
+
 ## Command line
 
 The same pipeline is available from the terminal:
@@ -117,12 +132,15 @@ The web app talks to a small JSON API (FastAPI). Interactive docs are at http://
 | `POST /api/drafts` | Draft posts on one chosen story (`platform`: `linkedin` or `x`) |
 | `GET /api/profile`, `PUT /api/profile` | Read or save your niche, stance, and voice |
 | `POST /api/profile/scan` | Suggest a voice description from pasted posts (not saved) |
+| `POST /api/profile/interview/question` | The next interview question, or done after five |
+| `POST /api/profile/interview/profile` | A profile built from the interview answers (not saved) |
+| `POST /api/posts/{id}/publish` | Publish an approved post (dry run unless live mode is set) |
 | `GET /api/posts?status=` | List drafts |
 | `GET /api/posts/{id}` | One draft with its sources and history |
 | `PUT /api/posts/{id}` | Save an edit to a pending draft (fact-checked again) |
 | `POST /api/posts/{id}/decision` | Approve or reject a pending draft |
 
-The API has no login. The Docker setup publishes only the web port (8080), so the API is reachable only from your machine. Don't expose it to a network you don't control.
+The API has no login. Publishing is off unless you set the live tokens. The Docker setup publishes only the web port (8080), so the API is reachable only from your machine. Don't expose it to a network you don't control.
 
 ## Design decisions
 
@@ -140,15 +158,15 @@ The API has no login. The Docker setup publishes only the web port (8080), so th
 - Trending topics come from Google News and Hacker News only, and results change between runs. Coverage can favour widely syndicated stories, and press releases sometimes rank high, so read the story before you draft from it.
 - The search uses the role's Wikipedia title, so a niche with an unusual name may find few stories.
 - Quality depends on the local model. Small models can produce generic text, so judge drafts by reading them.
-- There is no login, no scheduling, and no publishing to LinkedIn or X.
+- There is no login and no scheduling. Publishing to LinkedIn and X has not been tested against live accounts.
 - The editor rules are a starting list. Adjust `MAX_CHARS`, `MAX_HASHTAGS`, and `BANNED_PHRASES` in `src/content_agent/editor.py` to match your own standards.
 
 ## Next steps
 
-1. Build the profile with a short interview: Ollama asks questions and writes the profile from the answers.
+1. Test publishing against a real LinkedIn and X account, with a test post, before relying on it.
 2. Add more trend sources that are free to use. GDELT is an option but limits requests to one every five seconds. Reddit needs a registered app, and its terms should be checked first.
 3. Let the UI show more than one story per draft.
-4. Connect publishing, behind an interface, once LinkedIn and X API access is confirmed. X's API is paid.
+4. Schedule approved posts for a later time.
 
 ## License
 

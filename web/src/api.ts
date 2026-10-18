@@ -76,6 +76,23 @@ export const api = {
   scanVoice: (samples: string) =>
     request<{ voice: string }>("/api/profile/scan", { method: "POST", body: JSON.stringify({ samples }) }),
 
+  interviewNext: (history: { question: string; answer: string }[]) =>
+    request<{ done: boolean; question: string }>("/api/profile/interview/question", {
+      method: "POST",
+      body: JSON.stringify({ history }),
+    }),
+
+  interviewProfile: (history: { question: string; answer: string }[]) =>
+    request<Profile>("/api/profile/interview/profile", {
+      method: "POST",
+      body: JSON.stringify({ history }),
+    }),
+
+  publishStatus: () => request<{ mode: "dry-run" | "live" }>("/api/publish/status"),
+
+  publish: (id: number) =>
+    request<{ mode: string; result: string }>(`/api/posts/${id}/publish`, { method: "POST" }),
+
   posts: (status: Status) => request<PostSummary[]>(`/api/posts?status=${status}&limit=100`),
 
   post: (id: number) => request<PostDetail>(`/api/posts/${id}`),

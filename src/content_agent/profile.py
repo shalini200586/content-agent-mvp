@@ -46,3 +46,45 @@ def save_profile(path: str | Path, profile: Profile) -> None:
 def describe_voice(model: ChatModel, samples: str) -> str:
     """Draft a voice description from sample posts. The author reviews it before saving."""
     return model.complete(VOICE_SYSTEM_PROMPT, f"Sample posts by the author:\n{samples}").strip()
+
+
+INTERVIEW_QUESTIONS = 5
+INTERVIEW_SYSTEM_PROMPT = (
+    "You are interviewing a creator who posts on LinkedIn or X, to learn how they want to sound. "
+    "Ask exactly one short, specific question that is different from the earlier questions. "
+    "Ask about their niche, audience, opinions, tone, or the kinds of posts they like. "
+    "Reply with the question only."
+)
+PROFILE_SYSTEM_PROMPT = (
+    "You write a creator profile from interview answers. Reply with exactly three lines, "
+    "in this form, and nothing else:\n"
+    "NICHE: <one short phrase>\n"
+    "STANCE: <one sentence on what they believe>\n"
+    "VOICE: <two or three sentences on tone and style>"
+)
+
+
+def interview_question(model: ChatModel, history: list[tuple[str, str]]) -> str | None:
+    """The next interview question, or None once enough questions have been asked."""
+    if len(history) >= INTERVIEW_QUESTIONS:
+        return None
+    transcript = "\n".join(f"Q: {q}\nA: {a}" for q, a in history) or "(no questions yet)"
+    question = model.complete(INTERVIEW_SYSTEM_PROMPT, f"Earlier questions and answers:\n{transcript}")
+    return question.strip() or "What topic do you most want to post about?"
+
+
+def propose_profile(model: ChatModel, history: list[tuple[str, str]]) -> Profile:
+    """Turn the interview into a profile the author can review and edit."""
+    transcript = "\n".join(f"Q: {q}\nA: {a}" for q, a in history)
+    reply = model.complete(PROFILE_SYSTEM_PROMPT, f"Interview:\n{transcript}")
+    fields = {"NICHE": "", "STANCE": "", "VOICE": ""}
+    for line in reply.splitlines():
+        key, _, value = line.partition(":")
+        key = key.strip().upper()
+        if key in fields:
+            fields[key] = value.strip()
+    # If the model ignored the format, keep the author's own words rather than invent a profile.
+    if not any(fields.values()):
+        answers = " ".join(a for _, a in history)
+        fields["VOICE"] = answers[:500]
+    return Profile(niche=fields["NICHE"], stance=fields["STANCE"], voice=fields["VOICE"])

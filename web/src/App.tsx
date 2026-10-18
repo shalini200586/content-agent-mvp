@@ -306,6 +306,8 @@ function Drafts({ focusId, onFocusHandled }: { focusId: number | null; onFocusHa
             />
             <div className="muted small">{text.length} characters</div>
 
+            {selected.status === "approved" && <PublishPanel post={selected} onPublished={() => open(selected.id)} />}
+
             {selected.problems.length > 0 && (
               <div className="notice warn">
                 <strong>Check before approving</strong>
@@ -361,6 +363,10 @@ function Drafts({ focusId, onFocusHandled }: { focusId: number | null; onFocusHa
 
 function ProfileScreen() {
   const [profile, setProfile] = useState<Profile>({ niche: "", stance: "", voice: "" });
+  const [interview, setInterview] = useState<{ question: string; answer: string }[]>([]);
+  const [currentQuestion, setCurrentQuestion] = useState<string | null>(null);
+  const [answer, setAnswer] = useState("");
+  const [interviewBusy, setInterviewBusy] = useState(false);
   const [samples, setSamples] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -397,6 +403,44 @@ function ProfileScreen() {
       setError((e as Error).message);
     } finally {
       setBusy(null);
+    }
+  }
+
+  async function startInterview() {
+    setInterviewBusy(true);
+    setError(null);
+    try {
+      const next = await api.interviewNext([]);
+      setInterview([]);
+      setCurrentQuestion(next.question);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setInterviewBusy(false);
+    }
+  }
+
+  async function answerQuestion() {
+    if (!currentQuestion || answer.trim().length === 0) return;
+    const history = [...interview, { question: currentQuestion, answer: answer.trim() }];
+    setInterviewBusy(true);
+    setError(null);
+    try {
+      const next = await api.interviewNext(history);
+      setInterview(history);
+      setAnswer("");
+      if (next.done) {
+        setCurrentQuestion(null);
+        const proposed = await api.interviewProfile(history);
+        setProfile(proposed);
+        setMessage("Here is a profile built from your answers. Edit it, then press Save profile.");
+      } else {
+        setCurrentQuestion(next.question);
+      }
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setInterviewBusy(false);
     }
   }
 
@@ -440,6 +484,37 @@ function ProfileScreen() {
       </div>
 
       <div className="card">
+        <h3>Build it with a short interview</h3>
+        <p className="muted small">The model asks five questions, then writes a profile from your answers.</p>
+        {currentQuestion === null && (
+          <div className="row actions">
+            <span className="spacer" />
+            <button onClick={startInterview} disabled={interviewBusy}>
+              {interview.length > 0 ? "Start again" : "Start interview"}
+            </button>
+          </div>
+        )}
+        {currentQuestion !== null && (
+          <>
+            <p className="muted small">Question {interview.length + 1} of 5</p>
+            <p><strong>{currentQuestion}</strong></p>
+            <textarea
+              rows={3}
+              value={answer}
+              onChange={(e) => setAnswer(e.target.value)}
+              aria-label="Your answer"
+            />
+            <div className="row actions">
+              <span className="spacer" />
+              <button className="primary" onClick={answerQuestion} disabled={interviewBusy || answer.trim().length === 0}>
+                {interviewBusy ? "Thinking..." : interview.length === 4 ? "Finish" : "Next"}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+
+      <div className="card">
         <h3>Learn my voice from my posts</h3>
         <p className="muted small">Paste a few of your own posts. The model suggests a voice description, which you can edit.</p>
         <textarea
@@ -459,5 +534,53 @@ function ProfileScreen() {
 
       {error && <div className="notice error">{error}</div>}
     </section>
+  );
+}
+
+function PublishPanel({ post, onPublished }: { post: PostDetail; onPublished: () => void }) {
+  const [mode, setMode] = useState<"dry-run" | "live">("dry-run");
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const alreadyPublished = post.history.some((h) => h.event === "published");
+
+  useEffect(() => {
+    api.publishStatus().then((s) => setMode(s.mode)).catch(() => {});
+  }, []);
+
+  async function publish() {
+    setBusy(true);
+    setError(null);
+    setNote(null);
+    try {
+      const result = await api.publish(post.id);
+      setNote(result.mode === "dry-run" ? `Dry run: ${result.result}` : `Published: ${result.result}`);
+      onPublished();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="notice publish">
+      <div className="row between">
+        <span>
+          {alreadyPublished
+            ? "Already published."
+            : mode === "dry-run"
+              ? "Dry run: pressing Publish records it but sends nothing."
+              : `Ready to publish to ${post.platform === "x" ? "X" : "LinkedIn"}.`}
+        </span>
+        {!alreadyPublished && (
+          <button className="primary" onClick={publish} disabled={busy}>
+            {busy ? "Publishing..." : "Publish"}
+          </button>
+        )}
+      </div>
+      {note && <p className="muted small">{note}</p>}
+      {error && <p className="small" style={{ color: "var(--danger)" }}>{error}</p>}
+    </div>
   );
 }
