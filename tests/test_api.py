@@ -225,3 +225,26 @@ def test_failed_draft_job_reports_the_error(tmp_path):
 
 def test_unknown_job_is_404(client):
     assert client.get("/api/jobs/missing").status_code == 404
+
+
+def test_post_detail_works_when_connection_crosses_threads(tmp_path):
+    import threading
+
+    app = create_app(
+        db_path=str(tmp_path / "threads.db"),
+        model_factory=lambda: FakeChat(["x draft"]),
+        get_persona=lambda role: PERSONA,
+        get_headlines=lambda query: STORIES,
+        actor="tester",
+        background=False,
+    )
+    client = TestClient(app)
+    post_id = client.post(
+        "/api/drafts", json={"role": "Data engineer", "title": STORIES[0].title, "count": 1}
+    ).json()["post_ids"][0]
+
+    results = []
+    worker = threading.Thread(target=lambda: results.append(client.get(f"/api/posts/{post_id}").status_code))
+    worker.start()
+    worker.join()
+    assert results == [200]

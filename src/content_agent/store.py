@@ -72,7 +72,9 @@ def _now() -> str:
 
 class Store:
     def __init__(self, path: str = "content_agent.db"):
-        self.conn = sqlite3.connect(path)
+        # FastAPI may open a request's connection in one thread and use it in another.
+        # Each request has its own Store, so sharing it between threads one request at a time is safe.
+        self.conn = sqlite3.connect(path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
         # Databases created before the platform column existed get it here.
