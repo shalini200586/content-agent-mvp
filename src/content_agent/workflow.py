@@ -13,7 +13,7 @@ from content_agent.llm import ChatModel
 from content_agent.research import (
     Headline,
     Persona,
-    fetch_headlines,
+    fetch_all_headlines,
     fetch_persona,
     pick_hot_topic,
     research_query,
@@ -97,7 +97,7 @@ def research_and_draft(
     role: str,
     count: int = 3,
     get_persona: Callable[[str], Persona] = fetch_persona,
-    get_headlines: Callable[[str], list[Headline]] = fetch_headlines,
+    get_headlines: Callable[[str], list[Headline]] = fetch_all_headlines,
 ) -> Research:
     """Learn what a role does, find the hot topic in its field, and draft posts on it."""
     persona = get_persona(role)

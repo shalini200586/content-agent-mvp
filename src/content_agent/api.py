@@ -17,7 +17,7 @@ from content_agent.llm import ChatModel, OllamaChat
 from content_agent.research import (
     Headline,
     Persona,
-    fetch_headlines,
+    fetch_all_headlines,
     fetch_persona,
     pick_hot_topic,
     research_query,
@@ -48,7 +48,7 @@ def create_app(
     db_path: str | None = None,
     model_factory: Callable[[], ChatModel] | None = None,
     get_persona: Callable[[str], Persona] = fetch_persona,
-    get_headlines: Callable[[str], list[Headline]] = fetch_headlines,
+    get_headlines: Callable[[str], list[Headline]] = fetch_all_headlines,
     actor: str | None = None,
 ) -> FastAPI:
     db_path = db_path or os.environ.get("CONTENT_AGENT_DB", "content_agent.db")

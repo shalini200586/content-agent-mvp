@@ -262,7 +262,6 @@ button.danger {
   border: none;
   padding: 6px 14px;
   color: var(--muted);
-  text-transform: capitalize;
 }
 
 .segmented button[aria-selected="true"] {
@@ -280,6 +279,7 @@ button.danger {
   flex: 1;
   padding: 5px 8px;
   font-size: 13px;
+  text-transform: capitalize;
 }
 
 /* Notices and badges */

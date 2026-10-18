@@ -7,7 +7,7 @@ Everything runs on your own machine with [Ollama](https://ollama.com), so there 
 ## What it does
 
 1. **Your niche (built).** You type a role or niche, such as "Data engineer". Its Wikipedia summary anchors the voice of the posts.
-2. **What is hot (built).** The app searches Google News for that niche and lists the recent stories. It suggests the one covered by the most outlets, and you can choose any story.
+2. **What is hot (built).** The app searches Google News and Hacker News for that niche and lists the recent stories from both. It suggests the one covered by the most outlets, and you can choose any story. Both sources are free and need no key.
 3. **Facts check (built).** Drafts are written only from the story you chose and its sources. The editor flags numbers and names that don't appear in those sources, and it flags banned phrases and long posts.
 4. **Drafts (LinkedIn style).** The model writes several options, each from a different angle. X length limits and per-platform styles are planned.
 5. **You decide (built).** Drafts wait as `pending`. You can edit them, then approve or reject. Every change is logged with who made it.
@@ -37,6 +37,8 @@ docker compose logs -f api # watch the API log
 Your posts are stored in the `data` volume. To delete them, run `docker compose down -v`.
 
 To use a different model, change `qwen2.5:7b` in `docker-compose.yml` in both the `model` service and the `api` service's `CONTENT_AGENT_MODEL`.
+
+Already run Ollama on your computer? You can skip the bundled copy. Remove the `ollama` service and the `model` service from `docker-compose.yml`, then in the `api` service set `OLLAMA_HOST` to `http://host.docker.internal:11434`. Make sure the model is pulled on your computer with `ollama pull qwen2.5:7b`.
 
 ## Run it locally (for development)
 
@@ -117,12 +119,13 @@ The API has no login. The Docker setup publishes only the web port (8080), so th
 - **Decisions are final.** The store refuses to change an approved or rejected post. Edits are allowed only while a draft is pending, and every change is written to the audit log.
 - **The editor is rule-based on purpose.** Rules are predictable and easy to explain. A model-based reviewer could be added later as a second opinion.
 - **The model sits behind an interface.** Agents only know about `ChatModel`, so switching from Ollama to a hosted provider doesn't change the agent code.
-- **Free news sources.** Stories come from Wikipedia and Google News RSS, which need no key.
+- **Free news sources.** Stories come from Wikipedia, Google News RSS, and Hacker News. None needs a key. If one source is down, the others still work.
 
 ## Limitations
 
 - Fact checking is rule-based. It catches numbers and names that aren't in the sources, but it can't tell whether a claim in words is true. Read every post before you approve it.
-- Trending topics come from Google News only, and results change between runs. Coverage can favour widely syndicated stories.
+- Trending topics come from Google News and Hacker News only, and results change between runs. Coverage can favour widely syndicated stories, and press releases sometimes rank high, so read the story before you draft from it.
+- The search uses the role's Wikipedia title, so a niche with an unusual name may find few stories.
 - Quality depends on the local model. Small models can produce generic text, so judge drafts by reading them.
 - There is no login, no scheduling, and no publishing to LinkedIn or X.
 - The editor rules are a starting list. Adjust `MAX_CHARS`, `MAX_HASHTAGS`, and `BANNED_PHRASES` in `src/content_agent/editor.py` to match your own standards.
@@ -130,7 +133,7 @@ The API has no login. The Docker setup publishes only the web port (8080), so th
 ## Next steps
 
 1. Build the taste profile: a short interview with Ollama, or a scan of your own posts.
-2. Add more trend sources that are free to use, such as Wikimedia pageviews, Hacker News (Algolia), and GDELT. Reddit needs a registered app and its terms should be checked first.
+2. Add more trend sources that are free to use. GDELT is an option but limits requests to one every five seconds. Reddit needs a registered app, and its terms should be checked first.
 3. Let the UI show more than one story per draft.
 4. Connect publishing, behind an interface, once LinkedIn and X API access is confirmed. X's API is paid.
 

@@ -13,12 +13,11 @@ and easy to explain.
 import json
 import re
 import xml.etree.ElementTree as ET
-from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
 from email.utils import parsedate_to_datetime
 from typing import Callable
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 USER_AGENT = "content-agent-mvp/0.1 (local research step)"
@@ -82,6 +81,56 @@ def fetch_headlines(query: str, get: Callable[[str], bytes] = _get) -> list[Head
     return headlines
 
 
+def fetch_hn_headlines(query: str, get: Callable[[str], bytes] = _get) -> list[Headline]:
+    """Recent Hacker News stories matching a query, newest first. Free, no key needed."""
+    params = urlencode({"query": query, "tags": "story", "hitsPerPage": 30})
+    data = json.loads(get(f"https://hn.algolia.com/api/v1/search_by_date?{params}"))
+
+    headlines = []
+    for hit in data.get("hits", []):
+        title = (hit.get("title") or "").strip()
+        if not title:
+            continue
+        link = hit.get("url") or f"https://news.ycombinator.com/item?id={hit.get('objectID', '')}"
+        source = urlparse(link).netloc.removeprefix("www.") or "Hacker News"
+        headlines.append(
+            Headline(
+                title=title,
+                link=link,
+                source=source,
+                published=_parse_iso(hit.get("created_at")),
+            )
+        )
+    return headlines
+
+
+def fetch_all_headlines(query: str, get: Callable[[str], bytes] = _get) -> list[Headline]:
+    """Headlines from every source, newest first. A source that fails is skipped.
+
+    Only if every source fails is the error raised, so one outage does not stop the page.
+    """
+    headlines: list[Headline] = []
+    errors: list[Exception] = []
+    for fetch in (fetch_headlines, fetch_hn_headlines):
+        try:
+            headlines.extend(fetch(query, get=get))
+        except (OSError, ValueError) as error:
+            errors.append(error)
+    if not headlines and errors:
+        raise errors[0]
+    headlines.sort(key=lambda h: h.published or datetime.min, reverse=True)
+    return headlines
+
+
+def _parse_iso(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
 def _parse_date(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -126,6 +175,9 @@ def pick_hot_topic(headlines: list[Headline], persona: Persona) -> tuple[Headlin
 
 
 def research_query(persona: Persona) -> str:
-    """Search terms for the role: its title, plus the most common role words in its summary."""
-    common = [word for word, _ in Counter(_words(persona.summary)).most_common(3)]
-    return " OR ".join([persona.title] + common)
+    """Search terms for the role: its Wikipedia title.
+
+    Both news sources treat the words as "all of these", so the title alone keeps
+    results on topic. Adding summary words with OR made Hacker News return almost nothing.
+    """
+    return persona.title
