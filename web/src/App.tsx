@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, Platform, PostDetail, PostSummary, Profile, Status, Story, Trending } from "./api";
+import { api, Discovery, Platform, PostDetail, PostSummary, Profile, Status, Topic } from "./api";
 
 type Tab = "find" | "drafts" | "profile";
 
@@ -43,45 +43,52 @@ export default function App() {
 }
 
 function FindTopic({ onDrafted }: { onDrafted: (postId: number) => void }) {
-  const [role, setRole] = useState("");
+  const [discovery, setDiscovery] = useState<Discovery | null>(null);
+  const [chosen, setChosen] = useState<Topic | null>(null);
   const [voice, setVoice] = useState("");
   const [count, setCount] = useState(3);
   const [platform, setPlatform] = useState<Platform>("linkedin");
-  const [result, setResult] = useState<Trending | null>(null);
-  const [chosen, setChosen] = useState<Story | null>(null);
-  const [busy, setBusy] = useState<"search" | "draft" | null>(null);
+  const [busy, setBusy] = useState<"load" | "draft" | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Start from the saved voice in the profile, so the author does not retype it.
-  useEffect(() => {
-    api.profile().then((profile) => {
-      if (profile.voice) setVoice((current) => current || profile.voice);
-    }).catch(() => {});
-  }, []);
-
-  async function search() {
-    setBusy("search");
+  async function load(rescan: boolean) {
+    setBusy("load");
     setError(null);
-    setChosen(null);
     try {
-      const data = await api.trending(role.trim());
-      setResult(data);
-      setChosen(data.stories.find((s) => s.link === data.suggested) ?? data.stories[0] ?? null);
+      // The agent searches in the background, so poll until it finishes.
+      let job = await api.discover(rescan);
+      while (job.status === "running") {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        job = await api.job(job.job_id);
+      }
+      if (job.status === "error") throw new Error(job.error || "discovery failed");
+      const found = job.result as Discovery;
+      setDiscovery(found);
+      setChosen(found.topics[0] ?? null);
     } catch (e) {
-      setResult(null);
+      setDiscovery(null);
+      setChosen(null);
       setError((e as Error).message);
     } finally {
       setBusy(null);
     }
   }
 
+  useEffect(() => {
+    load(false);
+    // Start from the saved voice in the profile, so the author does not retype it.
+    api.profile().then((profile) => {
+      if (profile.voice) setVoice((current) => current || profile.voice);
+    }).catch(() => {});
+  }, []);
+
   async function draft() {
-    if (!result || !chosen) return;
+    if (!chosen) return;
     setBusy("draft");
     setError(null);
     try {
       // Drafting runs in the background, so poll until it finishes.
-      let job = await api.draft({ role: role.trim(), story: chosen, voice, count, platform });
+      let job = await api.draft({ story: chosen, backing: chosen.backing, voice, count, platform });
       while (job.status === "running") {
         await new Promise((resolve) => setTimeout(resolve, 2000));
         job = await api.job(job.job_id);
@@ -98,97 +105,102 @@ function FindTopic({ onDrafted }: { onDrafted: (postId: number) => void }) {
   return (
     <section className="stack">
       <div className="card">
-        <h2>What do you post about?</h2>
-        <p className="muted">
-          Name a role or niche. Its Wikipedia summary anchors the voice, and recent news shows what is trending.
-        </p>
-        <form
-          className="row"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (role.trim().length >= 2) search();
-          }}
-        >
-          <input
-            value={role}
-            onChange={(e) => setRole(e.target.value)}
-            placeholder="e.g. Data engineer"
-            aria-label="Role or niche"
-          />
-          <button className="primary" disabled={busy !== null || role.trim().length < 2}>
-            {busy === "search" ? "Searching..." : "Find stories"}
+        <div className="row between">
+          <h2>Hot right now for you</h2>
+          <button onClick={() => load(true)} disabled={busy !== null}>
+            {busy === "load" ? "Searching..." : "Rescan my interests"}
           </button>
-        </form>
+        </div>
+        {discovery && (
+          <div className="chips">
+            {discovery.interests.map((keyword) => (
+              <span key={keyword} className="chip">{keyword}</span>
+            ))}
+          </div>
+        )}
+        {!discovery && busy === "load" && <p className="muted">Finding stories for your interests. This can take a moment.</p>}
+        <p className="muted small">Interests come from your profile. Change them in the Profile tab.</p>
       </div>
 
       {error && <div className="notice error">{error}</div>}
 
-      {result && (
-        <>
-          <div className="card">
-            <h3>{result.persona.title}</h3>
-            <p className="muted clamp">{result.persona.summary}</p>
-          </div>
-
-          <div className="card">
-            <h3>Trending now</h3>
-            <ul className="stories">
-              {result.stories.map((story) => (
-                <li key={story.link}>
-                  <label className={chosen?.link === story.link ? "story selected" : "story"}>
+      {discovery && (
+        <div className="card">
+          <h3>Pick one topic</h3>
+          <ul className="stories">
+            {discovery.topics.map((topic) => {
+              const outlets = new Set(topic.backing.map((b) => b.source).filter(Boolean)).size;
+              return (
+                <li key={topic.link}>
+                  <label className={chosen?.link === topic.link ? "story selected" : "story"}>
                     <input
                       type="radio"
-                      name="story"
-                      checked={chosen?.link === story.link}
-                      onChange={() => setChosen(story)}
+                      name="topic"
+                      checked={chosen?.link === topic.link}
+                      onChange={() => setChosen(topic)}
                     />
                     <span>
-                      <span className="story-title">{story.title}</span>
+                      <span className="story-title">{topic.title}</span>
                       <span className="muted small">
-                        {story.source || "unknown outlet"}
-                        {story.link === result.suggested && <span className="badge">Suggested</span>}
+                        {topic.source || "unknown outlet"} · {outlets} outlet{outlets === 1 ? "" : "s"}
+                        <span className="badge">{topic.keyword}</span>
                       </span>
                     </span>
                   </label>
                 </li>
-              ))}
-            </ul>
-          </div>
+              );
+            })}
+          </ul>
+          {discovery.steps.length > 0 && (
+            <details>
+              <summary className="muted small">How the agent searched ({discovery.steps.length} steps)</summary>
+              <ul className="small muted">
+                {discovery.steps.map((step, i) => (
+                  <li key={i}>{step}</li>
+                ))}
+              </ul>
+            </details>
+          )}
+          {discovery.errors.length > 0 && (
+            <p className="muted small">Some sources were unavailable: {discovery.errors.join("; ")}</p>
+          )}
+        </div>
+      )}
 
-          <div className="card">
-            <h3>Draft options</h3>
-            <label className="field">
-              <span>Your voice (optional)</span>
-              <input
-                value={voice}
-                onChange={(e) => setVoice(e.target.value)}
-                placeholder="calm, practical, first person"
-              />
+      {chosen && (
+        <div className="card">
+          <h3>Draft options</h3>
+          <label className="field">
+            <span>Your voice (optional)</span>
+            <input
+              value={voice}
+              onChange={(e) => setVoice(e.target.value)}
+              placeholder="calm, practical, first person"
+            />
+          </label>
+          <div className="row between">
+            <label className="field inline">
+              <span>Platform</span>
+              <select value={platform} onChange={(e) => setPlatform(e.target.value as Platform)}>
+                <option value="linkedin">LinkedIn</option>
+                <option value="x">X</option>
+              </select>
             </label>
-            <div className="row between">
-              <label className="field inline">
-                <span>Platform</span>
-                <select value={platform} onChange={(e) => setPlatform(e.target.value as Platform)}>
-                  <option value="linkedin">LinkedIn</option>
-                  <option value="x">X</option>
-                </select>
-              </label>
-              <label className="field inline">
-                <span>Drafts</span>
-                <select value={count} onChange={(e) => setCount(Number(e.target.value))}>
-                  {[1, 2, 3, 4, 5].map((n) => (
-                    <option key={n} value={n}>
-                      {n}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <button className="primary" disabled={!chosen || busy !== null} onClick={draft}>
-                {busy === "draft" ? "Writing (this can take a few minutes)..." : "Draft on this story"}
-              </button>
-            </div>
+            <label className="field inline">
+              <span>Drafts</span>
+              <select value={count} onChange={(e) => setCount(Number(e.target.value))}>
+                {[1, 2, 3, 4, 5].map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button className="primary" disabled={busy !== null} onClick={draft}>
+              {busy === "draft" ? "Writing (this can take a few minutes)..." : "Draft on this topic"}
+            </button>
           </div>
-        </>
+        </div>
       )}
     </section>
   );
@@ -368,7 +380,7 @@ function Drafts({ focusId, onFocusHandled }: { focusId: number | null; onFocusHa
 }
 
 function ProfileScreen() {
-  const [profile, setProfile] = useState<Profile>({ niche: "", stance: "", voice: "" });
+  const [profile, setProfile] = useState<Profile>({ niche: "", stance: "", voice: "", interests: [] });
   const [interview, setInterview] = useState<{ question: string; answer: string }[]>([]);
   const [currentQuestion, setCurrentQuestion] = useState<string | null>(null);
   const [answer, setAnswer] = useState("");
@@ -470,6 +482,19 @@ function ProfileScreen() {
             value={profile.stance}
             onChange={(e) => setProfile({ ...profile, stance: e.target.value })}
             placeholder="e.g. Reliable pipelines matter more than new tools"
+          />
+        </label>
+        <label className="field">
+          <span>Interests (search keywords, up to five, separated by commas)</span>
+          <input
+            value={profile.interests.join(", ")}
+            onChange={(e) =>
+              setProfile({
+                ...profile,
+                interests: e.target.value.split(",").map((x) => x.trim()).filter(Boolean).slice(0, 5),
+              })
+            }
+            placeholder="Java, Spring Boot, JVM"
           />
         </label>
         <label className="field">

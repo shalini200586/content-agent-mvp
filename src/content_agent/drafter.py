@@ -5,6 +5,9 @@ from content_agent.llm import ChatModel
 SYSTEM_PROMPT = (
     "You write LinkedIn posts for a professional audience, in the first person. "
     "Sound like a specific person who has thought about this, not a press release. "
+    "Be informative: say what happened, who is involved, and why it matters to people in the field, "
+    "using the facts in the source material. "
+    "Add a human touch: a personal opinion or reaction, a plain question to readers, and warm, direct wording. "
     "Open with a concrete observation, a small scene, or a question, never a greeting or 'Excited to share'. "
     "Vary sentence length, and use one concrete example or analogy. "
     "Use only facts that appear in the source material or the author's notes. "
@@ -19,6 +22,7 @@ SYSTEM_PROMPT = (
 X_SYSTEM_PROMPT = (
     "You write posts for X (formerly Twitter) in the first person. "
     "Sound like a specific person, not a brand. Be short and direct. "
+    "Say the one fact that matters, then add a personal reaction or a short question to readers. "
     "Use only facts that appear in the source material or the author's notes. "
     "Never add numbers, dates, names, quotes, or results that are not there. "
     "Do not use emojis. Use at most one hashtag. "

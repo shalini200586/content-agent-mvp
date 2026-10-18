@@ -32,12 +32,26 @@ export interface DraftJob {
   status: "running" | "done" | "error";
   post_ids: number[];
   error: string;
+  result?: unknown;
+}
+
+export interface Topic extends Story {
+  keyword: string;
+  backing: Story[];
+}
+
+export interface Discovery {
+  interests: string[];
+  steps: string[];
+  errors: string[];
+  topics: Topic[];
 }
 
 export interface Profile {
   niche: string;
   stance: string;
   voice: string;
+  interests: string[];
 }
 
 export interface PostDetail extends PostSummary {
@@ -61,14 +75,16 @@ export const api = {
   trending: (role: string) =>
     request<Trending>(`/api/trending?role=${encodeURIComponent(role)}`),
 
-  draft: (body: { role: string; story: Story; voice: string; count: number; platform: Platform }) =>
+  discover: (rescan: boolean) => request<DraftJob>(`/api/discover?rescan=${rescan}`),
+
+  draft: (body: { story: Story; backing: Story[]; voice: string; count: number; platform: Platform }) =>
     request<DraftJob>("/api/drafts", {
       method: "POST",
       body: JSON.stringify({
-        role: body.role,
         title: body.story.title,
         link: body.story.link,
         source: body.story.source,
+        related: body.backing.map((b) => ({ title: b.title, link: b.link, source: b.source })),
         voice: body.voice,
         count: body.count,
         platform: body.platform,

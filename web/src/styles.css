@@ -440,3 +440,18 @@ button.danger {
 .sources a:hover {
   text-decoration: underline;
 }
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0 6px;
+}
+
+.chip {
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}

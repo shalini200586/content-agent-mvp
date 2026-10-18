@@ -5,7 +5,8 @@ drafted from sample posts the author pastes in (see `describe_voice`).
 """
 
 import json
-from dataclasses import asdict, dataclass
+import re
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from content_agent.llm import ChatModel
@@ -22,6 +23,7 @@ class Profile:
     niche: str = ""
     stance: str = ""
     voice: str = ""
+    interests: list[str] = field(default_factory=list)
 
 
 def load_profile(path: str | Path) -> Profile:
@@ -34,6 +36,7 @@ def load_profile(path: str | Path) -> Profile:
         niche=str(data.get("niche", "")),
         stance=str(data.get("stance", "")),
         voice=str(data.get("voice", "")),
+        interests=[str(x) for x in data.get("interests", []) if str(x).strip()],
     )
 
 
@@ -88,3 +91,26 @@ def propose_profile(model: ChatModel, history: list[tuple[str, str]]) -> Profile
         answers = " ".join(a for _, a in history)
         fields["VOICE"] = answers[:500]
     return Profile(niche=fields["NICHE"], stance=fields["STANCE"], voice=fields["VOICE"])
+
+
+INTERESTS_SYSTEM_PROMPT = (
+    "You read a creator's description and list what they post about, as search keywords. "
+    "Reply with up to five keywords, each one to three words, separated by commas, and nothing else. "
+    "Name subjects, tools, or people (for example 'Java', 'Spring Boot'). Never use adjectives or generic words."
+)
+MAX_INTERESTS = 5
+
+
+def extract_interests(model: ChatModel, description: str, fallback: str = "") -> list[str]:
+    """Search keywords for what the creator posts about. Falls back to the niche if the model gives nothing."""
+    reply = model.complete(INTERESTS_SYSTEM_PROMPT, "Creator description:" + chr(10) + description)
+    keywords: list[str] = []
+    for part in re.split(r'[,;\n]', reply):
+        keyword = part.strip().strip(".-*").strip()
+        if keyword and keyword.lower() not in {k.lower() for k in keywords} and len(keyword) <= 60:
+            keywords.append(keyword)
+        if len(keywords) == MAX_INTERESTS:
+            break
+    if not keywords and fallback.strip():
+        keywords = [fallback.strip()]
+    return keywords

@@ -55,9 +55,9 @@ def client(tmp_path):
 
 
 def test_profile_endpoints_save_and_return(client):
-    assert client.get("/api/profile").json() == {"niche": "", "stance": "", "voice": ""}
-    saved = client.put("/api/profile", json={"niche": "data", "stance": "pipelines", "voice": "calm"})
-    assert saved.json() == {"niche": "data", "stance": "pipelines", "voice": "calm"}
+    assert client.get("/api/profile").json() == {"niche": "", "stance": "", "voice": "", "interests": []}
+    saved = client.put("/api/profile", json={"niche": "data", "stance": "pipelines", "voice": "calm", "interests": []})
+    assert saved.json() == {"niche": "data", "stance": "pipelines", "voice": "calm", "interests": []}
     assert client.get("/api/profile").json()["niche"] == "data"
 
 

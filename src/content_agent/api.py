@@ -15,10 +15,12 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from content_agent.agent import run_discovery
 from content_agent.editor import review_post
 from content_agent.profile import (
     Profile,
     describe_voice,
+    extract_interests,
     interview_question,
     load_profile,
     propose_profile,
@@ -29,6 +31,7 @@ from content_agent.llm import ChatModel, OllamaChat
 from content_agent.research import (
     Headline,
     Persona,
+    discover_topics,
     fetch_all_headlines,
     fetch_persona,
     pick_hot_topic,
@@ -38,20 +41,29 @@ from content_agent.store import InvalidTransition, Post, PostNotFound, Store
 from content_agent.workflow import draft_on_story
 
 
+class StoryIn(BaseModel):
+    title: str = Field(min_length=3, max_length=300)
+    link: str = Field(default="", max_length=2000)
+    source: str = Field(default="", max_length=200)
+
+
 class DraftRequest(BaseModel):
-    role: str = Field(min_length=2, max_length=120)
+    # The role is optional: when the topic comes from discovery, the profile supplies the persona.
+    role: str = Field(default="", max_length=120)
     title: str = Field(min_length=3, max_length=300)
     link: str = Field(default="", max_length=2000)
     source: str = Field(default="", max_length=200)
     voice: str = Field(default="", max_length=500)
     count: int = Field(default=3, ge=1, le=5)
     platform: Literal["linkedin", "x"] = "linkedin"
+    related: list[StoryIn] = Field(default_factory=list, max_length=10)
 
 
 class ProfileRequest(BaseModel):
     niche: str = Field(default="", max_length=200)
     stance: str = Field(default="", max_length=500)
     voice: str = Field(default="", max_length=500)
+    interests: list[str] | None = Field(default=None, max_length=5)
 
 
 class ScanRequest(BaseModel):
@@ -150,7 +162,11 @@ def create_app(
 
     @app.put("/api/profile")
     def put_profile(body: ProfileRequest) -> dict:
-        profile = Profile(niche=body.niche.strip(), stance=body.stance.strip(), voice=body.voice.strip())
+        current = load_profile(profile_path)
+        interests = current.interests if body.interests is None else [i.strip() for i in body.interests if i.strip()]
+        profile = Profile(
+            niche=body.niche.strip(), stance=body.stance.strip(), voice=body.voice.strip(), interests=interests
+        )
         save_profile(profile_path, profile)
         return asdict(profile)
 
@@ -185,11 +201,20 @@ def create_app(
         store.record_publication(post_id, url, actor=who)
         return {"mode": publish_mode(), "result": url}
 
-    def run_draft_job(job_id: str, persona: Persona, story: Headline, voice: str, body: DraftRequest) -> None:
+    def run_draft_job(
+        job_id: str, persona: Persona, story: Headline, related: list[Headline], voice: str, body: DraftRequest
+    ) -> None:
         store = Store(db_path)
         try:
             post_ids = draft_on_story(
-                make_model(), store, persona, story, count=body.count, voice=voice, platform=body.platform
+                make_model(),
+                store,
+                persona,
+                story,
+                related=related,
+                count=body.count,
+                voice=voice,
+                platform=body.platform,
             )
             jobs[job_id] = {"status": "done", "post_ids": post_ids, "error": ""}
         except Exception as error:  # the job record carries the message to the client
@@ -197,26 +222,78 @@ def create_app(
         finally:
             store.close()
 
+    def run_discovery_job(job_id: str, rescan: bool) -> None:
+        try:
+            profile = load_profile(profile_path)
+            if rescan or not profile.interests:
+                basis = profile.niche.strip()
+                if not basis:
+                    raise ValueError("Describe your niche in the Profile tab first.")
+                profile.interests = extract_interests(make_model(), basis, fallback=profile.niche)
+                save_profile(profile_path, profile)
+            if not profile.interests:
+                raise ValueError("Could not work out your interests. Add some in the Profile tab.")
+
+            run = run_discovery(make_model(), profile.niche, profile.interests, get_headlines)
+            if not run.topics:
+                raise ValueError("No recent stories fit your niche yet. Agent steps: " + " | ".join(run.steps))
+            result = {
+                "interests": profile.interests,
+                "steps": run.steps,
+                "errors": [step for step in run.steps if "failed" in step],
+                "topics": [
+                    {
+                        **_headline_json(t.headline),
+                        "keyword": t.keyword,
+                        "backing": [_headline_json(h) for h in t.backing],
+                    }
+                    for t in run.topics
+                ],
+            }
+            jobs[job_id] = {"status": "done", "post_ids": [], "error": "", "result": result}
+        except Exception as error:
+            jobs[job_id] = {"status": "error", "post_ids": [], "error": str(error), "result": None}
+
+    @app.get("/api/discover")
+    def discover(rescan: bool = False) -> dict:
+        """Start the discovery agent in the background. Poll /api/jobs/{job_id} for the topics."""
+        job_id = uuid.uuid4().hex
+        jobs[job_id] = {"status": "running", "post_ids": [], "error": "", "result": None}
+        if background:
+            threading.Thread(target=run_discovery_job, args=(job_id, rescan), daemon=True).start()
+        else:
+            run_discovery_job(job_id, rescan)
+        return {"job_id": job_id, **jobs[job_id]}
+
     @app.post("/api/drafts", status_code=201)
     def create_drafts_for_story(body: DraftRequest) -> dict:
-        try:
-            persona = persona_for(body.role)
-        except OSError as error:
-            raise HTTPException(502, f"could not reach Wikipedia: {error}") from error
         profile = load_profile(profile_path)
+        if body.role.strip():
+            try:
+                persona = persona_for(body.role)
+            except OSError as error:
+                raise HTTPException(502, f"could not reach Wikipedia: {error}") from error
+        else:
+            # No role given: the profile describes the author instead of a Wikipedia page.
+            persona = Persona(
+                title=profile.niche or "Creator",
+                summary=" ".join(x for x in [profile.niche, profile.stance] if x) or "A creator who posts online.",
+                url="",
+            )
         voice = body.voice or profile.voice
         if profile.stance:
             voice = f"{voice}. Stance: {profile.stance}" if voice else f"Stance: {profile.stance}"
         story = Headline(title=body.title, link=body.link, source=body.source, published=None)
+        related = [Headline(title=r.title, link=r.link, source=r.source, published=None) for r in body.related]
 
         job_id = uuid.uuid4().hex
         jobs[job_id] = {"status": "running", "post_ids": [], "error": ""}
         if background:
             threading.Thread(
-                target=run_draft_job, args=(job_id, persona, story, voice, body), daemon=True
+                target=run_draft_job, args=(job_id, persona, story, related, voice, body), daemon=True
             ).start()
         else:
-            run_draft_job(job_id, persona, story, voice, body)
+            run_draft_job(job_id, persona, story, related, voice, body)
         return {"job_id": job_id, **jobs[job_id]}
 
     @app.get("/api/jobs/{job_id}")
